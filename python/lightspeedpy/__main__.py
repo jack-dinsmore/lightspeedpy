@@ -1,5 +1,3 @@
-from . import _rust
-
 import argparse, os
 from .dataset import DataSet
 from .image import get_linear_image, get_weighted_image, save_image, load_image

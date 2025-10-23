@@ -23,6 +23,8 @@ def make_m1m2_grid():
         sigma_grid = sigma_grid.reshape(-1)
         mean_grid = mean_grid.reshape(-1)
         moments = moments.reshape(2, -1)
+        if not os.path.exists(os.path.dirname(GRID_LOCATION)):
+            os.mkdir(os.path.dirname(GRID_LOCATION))
         np.save(GRID_LOCATION, np.concatenate([moments, [sigma_grid], [mean_grid]]))
     m1, m2, sigmas, means = np.load(GRID_LOCATION)
 

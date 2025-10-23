@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=65", "wheel", "maturin>=1.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightspeedpy"
+version = "0.1.0"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "lightspeedpy._rust"
+python-source = "python"

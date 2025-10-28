@@ -105,7 +105,7 @@ class DataSet:
 
     def set_bias(self, bias):
         if bias == "self":
-            self.bias = self.get_pixel_properties().bias
+            self.bias = self.get_pixel_properties().bias + DEFAULT_BIAS / ADU_PER_ELECTRON
         else:
             data_set = DataSet(bias, cr_cut=False, auto_bias=False)
             self.bias_data_set = data_set

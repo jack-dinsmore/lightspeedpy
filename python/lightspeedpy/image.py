@@ -15,6 +15,7 @@ def get_linear_image(data_set):
     if data_set.flat is not None:
         image /= data_set.flat
 
+
     # Replace nans with medians
     image[np.isnan(image)] = np.nanmedian(image)
 
@@ -51,6 +52,7 @@ def get_weighted_image(data_set):
         image[good_mask] += frame.image[good_mask]
         n_frames[good_mask] += 1
     image /= n_frames
+    image = np.maximum(image, 0)
 
     # Get some simple variables useful for integration
     width_image = data_set.get_pixel_properties().widths
@@ -63,13 +65,11 @@ def get_weighted_image(data_set):
     # Pre-initialize some arrays
     ts = np.zeros(data_set.image_shape)
     tsderiv = np.zeros(data_set.image_shape)
-    n_frames = np.zeros(data_set.image_shape, int)
 
     # Run a few Newton iterations
     for iteration in range(4):
         ts *= 0
         tsderiv *= 0
-        n_frames *= 0
 
         poisson_pdfs = []
         for n in range(max_n):
@@ -95,18 +95,15 @@ def get_weighted_image(data_set):
             m1/=m0
             m2/=m0
 
-            ts[good_mask] += m1
+            ts[good_mask] += m1 - 1
             tsderiv[good_mask] += m2 - m1*m1
-            n_frames[good_mask] += 1
-
-        ts /= n_frames
-        tsderiv /= n_frames
 
         # Perform the iterative step
-        delta = (1 - ts) / tsderiv
-        image += delta
+        delta = ts / tsderiv
+        image -= delta
+        image = np.maximum(image, 0)
         p99 = np.nanpercentile(np.abs(delta), 99)
-        print("Iteration", iteration, "Median shift", np.nanmedian(delta), "Max shift", np.nanmax(np.abs(delta)), "99th percentile shift", p99)
+        print("Iteration", iteration+1, "Median shift", np.nanmedian(delta), "Max shift", np.nanmax(np.abs(delta)), "99th percentile shift", p99)
 
         if p99 < 0.01:
             break
@@ -114,9 +111,11 @@ def get_weighted_image(data_set):
     # The image is now an accurate estimate of the number of electrons per frame.
 
     # Rescale to electrons per second
-    image[image < 0] = np.nan
-    image[image > max_n] = np.nan
+    # image[image < 0] = np.nan
+    # image[image > max_n] = np.nan
     image /= frame_duration
+
+    image[np.isnan(image)] = 0
     
     # Divide by flat
     if data_set.flat is not None:

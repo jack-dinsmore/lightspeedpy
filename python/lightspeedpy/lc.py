@@ -6,6 +6,12 @@ from .ephemeris import Ephemeris
 
 MAX_N_SCALE = 2
 
+def delta_phase(phase_start, phase_end):
+    if phase_end > phase_start:
+        return phase_end - phase_start
+    else:
+        return 1 - (phase_start - phase_end)
+
 class Lightcurve:
     def __init__(self, edges, flux, exposure, duration, eph):
         self.edges = edges
@@ -43,6 +49,9 @@ class Lightcurve:
         hdul.writeto(args.output, overwrite=True)
 
 def get_bin_weights(phase_edges, start_phase, end_phase):
+    """
+    The weight is the fraction of the bin that goes into this frame.
+    """
     weights = np.zeros(len(phase_edges)-1)
     bin_phase_duration = phase_edges[1] - phase_edges[0]
 
@@ -51,10 +60,10 @@ def get_bin_weights(phase_edges, start_phase, end_phase):
     end_index = int(end_phase / bin_phase_duration)
 
     if start_index == end_index:
-        weights[start_index] += (end_phase - start_phase) / bin_phase_duration
+        weights[start_index] += delta_phase(start_phase, end_phase) / bin_phase_duration
     else:
-        weights[start_index] += (phase_edges[start_index+1] - start_phase) / bin_phase_duration
-        weights[end_index] += (end_phase - phase_edges[end_index]) / bin_phase_duration
+        weights[start_index] += delta_phase(start_phase, phase_edges[start_index+1]) / bin_phase_duration
+        weights[end_index] += delta_phase(phase_edges[end_index], end_phase) / bin_phase_duration
 
     # Get the weights between the start and end
     weights[start_index+1:end_index] += 1
@@ -111,14 +120,13 @@ def get_weighted_lc(data_set, image, args):
 
     # Get the initial lightcurve
     frame_weights = []
-    bad_pixel_electrons = np.zeros_like(lightcurve)
     for frame in data_set:
         bins_per_frame = frame.duration / bin_time_duration
 
         start_phase = ephemeris.get_phase(frame.timestamp)
         end_phase = ephemeris.get_phase(frame.timestamp+frame.duration)
         weights = get_bin_weights(phase_edges, start_phase, end_phase)
-        frame_weights.append(weights / np.sum(weights))
+        frame_weights.append(np.copy(weights))
         frame_duration = frame.duration
 
         # Add to lightcurve
@@ -128,14 +136,15 @@ def get_weighted_lc(data_set, image, args):
         exposures += bin_time_duration*weights
 
     lightcurve /= np.mean(lightcurve)
+    lightcurve /= bins_per_frame
+
     pixel_image *= frame_duration # Convert back to electrons per frame
 
     # Perform the fit
 
     # Pre-initialize some arrays
     ts = np.zeros(len(lightcurve))
-    tsderiv = np.zeros(len(lightcurve))
-    total_weights = np.zeros(len(lightcurve))
+    ts_hessian = np.zeros((len(lightcurve), len(lightcurve)))
     max_n = MAX_N_SCALE*int(np.ceil(np.max(pixel_image))) # The "MAX_N_SCALE" prefactor indicates that the LC maximum is at most double the LC mean. If this is untrue, increase the number (at the cost of performance)
 
     if max_n > 100:
@@ -144,16 +153,16 @@ def get_weighted_lc(data_set, image, args):
     n_factorial = [factorial(n) for n in range(max_n)]
 
     # Run a few Newton iterations
-    for iteration in range(4):
+    for iteration in range(8):
         ts *= 0
-        tsderiv *= 0
-        total_weights *= 0
+        ts_hessian *= 0
 
         # Count up the moments
         for frame_num, frame in enumerate(data_set):
             weights = frame_weights[frame_num]
             good_mask = ~np.isnan(frame.image)[roi_mask]
             lambdas = pixel_image[good_mask] * np.sum(weights*lightcurve)
+
             poisson_pdfs = []
             for n in range(max_n):
                 poisson_pdfs.append(lambdas**n / n_factorial[n])
@@ -173,22 +182,30 @@ def get_weighted_lc(data_set, image, args):
             m1/=m0
             m2/=m0
 
-            ts += np.mean(m1)*weights
-            tsderiv += np.mean(m2 - m1*m1)*weights
-            total_weights += weights
+            ts += np.sum((m1 - 1)*pixel_image[good_mask])*weights
+            ts_hessian += np.multiply.outer(weights, weights) * np.sum((m2 - m1*m1)*pixel_image[good_mask]**2)
 
-        ts /= total_weights / len(total_weights)
-        tsderiv /= total_weights / len(total_weights)
+        ts_inv_hessian = np.linalg.pinv(ts_hessian)
 
+        import matplotlib.pyplot as plt # TODO
+        fig, axs = plt.subplots(ncols=2)
+        axs[0].imshow(ts_hessian, vmax=0)
+        vmax = np.max(np.abs(ts_inv_hessian))
+        axs[1].imshow(ts_inv_hessian, vmin=-vmax, vmax=vmax, cmap="RdBu")
+        fig.savefig("dbg.png")
+        
         # Perform the iterative step
-        delta = (1 - ts) / tsderiv
-        delta /= np.mean(pixel_image)
+        delta = ts_inv_hessian @ ts
+        print(ts)
 
-        lightcurve += delta
+        lightcurve -= delta
+        lightcurve = np.maximum(lightcurve, 0.1)
         p99 = np.nanpercentile(np.abs(delta), 99)
         print("Iteration", iteration, "Median shift", np.nanmedian(delta), "Max shift", np.nanmax(np.abs(delta)), "99th percentile shift", p99)
 
-        if p99 < 0.01:
+        print(lightcurve)
+
+        if p99 < 0.001:
             break
 
     lightcurve[lightcurve / np.nanmean(lightcurve) > MAX_N_SCALE] = np.nan

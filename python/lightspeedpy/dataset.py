@@ -74,19 +74,7 @@ class DataSet:
             self.start_time = Time(default_mjd, format="mjd", scale="utc")
         self.start_time = self.start_time.tt # Switch to TT
         self.time_per_frame = (hdul[2].data["TIMESTAMP"][1] - hdul[2].data["TIMESTAMP"][0]) / float(self.frames_per_bundle)
-
-        psr_coord = SkyCoord(
-            ra=hdul[1].header["TELRA"],
-            dec=hdul[1].header["TELDEC"],
-            unit=(u.hourangle, u.deg),
-            frame="icrs"
-        )
-        loc = EarthLocation.of_site('LCO')
-        start_ltt_bary = self.start_time.light_travel_time(psr_coord, location=loc)
-        start_plus_one_ltt_bary = (self.start_time+1*u.s).light_travel_time(psr_coord, location=loc)
-        ltt_derivative = (start_plus_one_ltt_bary - start_ltt_bary).to(u.s).value # Seconds per second
-        self.start_time = self.start_time.mjd *(3600*24) + start_ltt_bary.to(u.s).value
-        self.time_dilation_factor = 1 + ltt_derivative
+        self.start_time = self.start_time.mjd *(3600*24)
 
     def get_pixel_properties(self):
         if self.pixel_properties is None:
@@ -183,8 +171,8 @@ class DataSetIterator:
         raw_image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :]
         timestamp = self.open_file[2].data["TIMESTAMP"][self.bundle_index]
         timestamp += self.data_set.time_per_frame * self.frame_index
-        timestamp *= self.data_set.time_dilation_factor
         timestamp += self.data_set.start_time
+
         self.bar.update(1)
         self.first_run = False
 
@@ -194,7 +182,7 @@ class Frame:
     def __init__(self, raw_image, timestamp, data_set):
         self.image = raw_image.astype(float) / ADU_PER_ELECTRON
         self.duration = data_set.time_per_frame
-        self.timestamp = timestamp
+        self.timestamp = timestamp # Seconds
 
         if data_set.bias is not None:
             self.image -= data_set.bias

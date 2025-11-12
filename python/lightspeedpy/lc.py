@@ -13,10 +13,10 @@ def delta_phase(phase_start, phase_end):
         return 1 - (phase_start - phase_end)
 
 class Lightcurve:
-    def __init__(self, edges, flux, exposure, duration, eph):
+    def __init__(self, edges, flux, exposures, duration, eph):
         self.edges = edges
         self.flux = flux
-        self.exposure = exposure
+        self.exposures = exposures
         self.duration = duration
         self.ephemeris = eph
 
@@ -25,10 +25,11 @@ class Lightcurve:
             fits.Column(name='PHASEHI', array=self.edges[1:], format='E'),
             fits.Column(name='PHASELO', array=self.edges[:-1], format='E'),
             fits.Column(name='FLUX', array=self.flux, format='E'),
+            fits.Column(name='EXPOSURE', array=self.exposures, format='E'),
         ]
         hdu = fits.BinTableHDU.from_columns(cols)
 
-        hdu.header["EXPOSURE"] = self.exposure
+        hdu.header["EXPOSURE"] = np.sum(self.exposures)
         hdu.header["DURATION"] = self.duration
         hdu.header["NU"] = self.ephemeris.nu
         hdu.header["NUDOT"] = self.ephemeris.nudot
@@ -97,7 +98,7 @@ def get_linear_lc(data_set, args):
         frame_duration = frame.duration
 
     fluxes = electrons / exposures # Counts per bin
-    return Lightcurve(phase_edges, fluxes, np.sum(exposures), frame_duration, ephemeris)
+    return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
 
 def get_weighted_lc(data_set, image, args):
     # Set up lightcurve
@@ -187,23 +188,25 @@ def get_weighted_lc(data_set, image, args):
 
         ts_inv_hessian = np.linalg.pinv(ts_hessian)
 
-        import matplotlib.pyplot as plt # TODO
-        fig, axs = plt.subplots(ncols=2)
-        axs[0].imshow(ts_hessian, vmax=0)
-        vmax = np.max(np.abs(ts_inv_hessian))
-        axs[1].imshow(ts_inv_hessian, vmin=-vmax, vmax=vmax, cmap="RdBu")
-        fig.savefig("dbg.png")
+        # import matplotlib.pyplot as plt # TODO
+        # fig, axs = plt.subplots(ncols=2)
+        # axs[0].imshow(ts_hessian, vmax=0)
+        # vmax = np.max(np.abs(ts_inv_hessian))
+        # axs[1].imshow(ts_inv_hessian, vmin=-vmax, vmax=vmax, cmap="RdBu")
+        # fig.savefig("dbg.png")
         
         # Perform the iterative step
         delta = ts_inv_hessian @ ts
-        print(ts)
 
         lightcurve -= delta
         lightcurve = np.maximum(lightcurve, 0.1)
         p99 = np.nanpercentile(np.abs(delta), 99)
         print("Iteration", iteration, "Median shift", np.nanmedian(delta), "Max shift", np.nanmax(np.abs(delta)), "99th percentile shift", p99)
 
-        print(lightcurve)
+        import matplotlib.pyplot as plt # TODO
+        fig, ax = plt.subplots()
+        ax.plot((phase_edges[1:] + phase_edges[:-1]) / 2, lightcurve)
+        fig.savefig(f"dbg-{iteration}.png")
 
         if p99 < 0.001:
             break
@@ -214,4 +217,4 @@ def get_weighted_lc(data_set, image, args):
     lightcurve *= np.sum(pixel_image) # Now counts per frame
     lightcurve /= frame_duration # Now counts per second
 
-    return Lightcurve(phase_edges, lightcurve, np.sum(exposures), frame_duration, ephemeris)
+    return Lightcurve(phase_edges, lightcurve, exposures, frame_duration, ephemeris)

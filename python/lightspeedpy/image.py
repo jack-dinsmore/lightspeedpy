@@ -31,6 +31,8 @@ def save_image(image, data_set, args):
         hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
     for key, value in data_set.header1.items():
         if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
+            if len(key) > 8:
+                key = key[-8:]
             hdu.header[key] = value
             
     hdu.writeto(args.output, overwrite=True)

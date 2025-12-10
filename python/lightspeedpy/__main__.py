@@ -8,7 +8,7 @@ def get_dataset(args):
     if os.path.exists(args.output) and not args.clobber:
         raise Exception(f"Cannot save to {args.output}: file already exists and clobber is False")
     
-    data_set = DataSet(args.input)
+    data_set = DataSet(args.input, timing_offset=args.timing_offset)
     if args.bias is not None:
         data_set.set_bias(args.bias)
     else:
@@ -64,6 +64,7 @@ def main():
     parser_image.add_argument("--bias", help="File name of bias")
     parser_image.add_argument("--dark", help="File name of dark")
     parser_image.add_argument("--flat", help="File name of flat")
+    parser_image.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser_image.add_argument("--weight", help="Set to use weights", action=argparse.BooleanOptionalAction)
     parser_image.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser_image.set_defaults(func=get_image)
@@ -78,6 +79,8 @@ def main():
     parser_lc.add_argument("--bias", help="File name of bias")
     parser_lc.add_argument("--dark", help="File name of dark")
     parser_lc.add_argument("--flat", help="File name of flat")
+    parser_lc.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
+    parser_lc.add_argument("--observatory", help="Observatory (Default: Las Campanas Observatory)", default="Las Campanas Observatory")
     parser_lc.add_argument("--weight", help="Set to use weights", action=argparse.BooleanOptionalAction)
     parser_lc.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser_lc.set_defaults(func=get_lc)

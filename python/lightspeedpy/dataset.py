@@ -11,9 +11,9 @@ ADU_PER_ELECTRON = 8.9
 DEFAULT_BIAS = 199.5
 
 class DataSet:
-    def __init__(self, input, cr_cut=True, auto_bias=True):
-        directory = os.path.dirname(input)
-        filename = os.path.basename(input)
+    def __init__(self, filename, cr_cut=True, auto_bias=True, timing_offset=0):
+        directory = os.path.dirname(filename)
+        filename = os.path.basename(filename)
         prefix = filename[:-8]
 
         self.filenames = []
@@ -21,7 +21,7 @@ class DataSet:
             if not f.startswith(prefix): continue
             self.filenames.append(f"{directory}/{f}")
         if len(self.filenames) == 0:
-            raise Exception(f"The filename {input} does not exist")
+            raise Exception(f"The filename {filename} does not exist")
         self.filenames = np.sort(self.filenames)
         self.display_filenames()
 
@@ -29,7 +29,7 @@ class DataSet:
             self.header0 = dict(hdul[0].header)
             self.header1 = dict(hdul[1].header)
             self.get_image_data(hdul)
-            self.get_timing_data(hdul)
+            self.get_timing_data(hdul, timing_offset)
 
         self.bias = None
         self.bias_data_set = None
@@ -64,17 +64,32 @@ class DataSet:
                 n_frames += hdul[1].shape[0] * self.frames_per_bundle
         return n_frames
 
-    def get_timing_data(self, hdul):
-        try:
-            self.start_time = Time(hdul[0].header["GPSSTART"], scale="utc")
-            self.start_time += 10 * u.s # Kevin's offset
-        except:
-            print(f"No GPS time detected. Using {DEFAULT_TIME}")
-            default_mjd = Time(DEFAULT_TIME, scale="utc").mjd
-            self.start_time = Time(default_mjd, format="mjd", scale="utc")
-        self.start_time = self.start_time.tt # Switch to TT
+    def get_timing_data(self, hdul, timing_offset=0):
+        # Get timing data for this fileset. Note: this function should only be called on the first cube. get_image_data has to be run first
         self.time_per_frame = (hdul[2].data["TIMESTAMP"][1] - hdul[2].data["TIMESTAMP"][0]) / float(self.frames_per_bundle)
-        self.start_time = self.start_time.mjd *(3600*24)
+        try:
+            self.start_time = Time(hdul[0].header["GPSSTART"], format="isot")
+        except:
+            self.start_time = Time(0, format="mjd")
+        print(self.start_time.mjd)
+        self.start_time = self.start_time.mjd * 3600 * 24 # start_time in units of seconds
+        self.start_time += 1 # ???
+        self.start_time -= hdul[2].data["TIMESTAMP"][0] # start_time is now time that the last frame in the first bundle was read out
+        # self.start_time -= self.frames_per_bundle * self.time_per_frame # start_time is now time that the first frame in the first bundle was started
+        # self.start_time -= self.time_per_frame # start_time is now time that the first frame in the first bundle was started
+        self.start_time -= hdul[1].header["HIERARCH TIMING READOUT TIME"] / 2# start_time is now time that the frame before the first frame was halfway through readout
+        self.start_time -= timing_offset
+
+    def get_timestamps(self):
+        timestamps = []
+        for filename in self.filenames:
+            with fits.open(filename, memmap=True) as hdul:
+                these_timestamps = []
+                for timestamp in hdul[2].data["TIMESTAMP"]:
+                    for frame_index in range(self.frames_per_bundle):
+                        these_timestamps.append(np.float64(timestamp) + frame_index*self.time_per_frame + self.start_time)
+            timestamps = np.concatenate([timestamps, these_timestamps])
+        return timestamps
 
     def get_pixel_properties(self):
         if self.pixel_properties is None:
@@ -169,7 +184,7 @@ class DataSetIterator:
         # Get the frame
         start_pixel = self.data_set.image_shape[0] * self.frame_index
         raw_image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :]
-        timestamp = self.open_file[2].data["TIMESTAMP"][self.bundle_index]
+        timestamp = np.float64(self.open_file[2].data["TIMESTAMP"][self.bundle_index])
         timestamp += self.data_set.time_per_frame * self.frame_index
         timestamp += self.data_set.start_time
 
@@ -179,6 +194,11 @@ class DataSetIterator:
         return Frame(raw_image, timestamp, self.data_set)
     
 class Frame:
+    """
+    # Attributes
+    * image contains the frame image (float) in units of electrons. If darks, biases, and cr cuts were set, they are already subtracted
+    * timestamp contains the time in seconds after camera start
+    """
     def __init__(self, raw_image, timestamp, data_set):
         self.image = raw_image.astype(float) / ADU_PER_ELECTRON
         self.duration = data_set.time_per_frame

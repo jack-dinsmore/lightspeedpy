@@ -32,9 +32,6 @@ class Lightcurve:
         hdu.header["EXPOSURE"] = np.sum(self.exposures)
         hdu.header["DURATION"] = self.duration
         hdu.header["NU"] = self.ephemeris.nu
-        hdu.header["NUDOT"] = self.ephemeris.nudot
-        hdu.header["NUDDOT"] = self.ephemeris.nuddot
-        hdu.header["PEPOCH"] = self.ephemeris.pepoch / (3600*24)
 
         for key, value in vars(args).items():
             if key == "func": continue
@@ -43,6 +40,8 @@ class Lightcurve:
             hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
         for key, value in data_set.header1.items():
             if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
+                if len(key) > 8:
+                    key = key[-8:]
                 hdu.header[key] = value
 
         # Write to file, table in HDU 1
@@ -78,12 +77,12 @@ def get_linear_lc(data_set, args):
     electrons = np.zeros(args.bins)
     exposures = np.zeros(args.bins)
     roi = Region.load(args.roi)
-    ephemeris = Ephemeris.from_file(args.eph)
+    ephemeris = Ephemeris(args.eph, data_set.get_timestamps(), observatory=args.observatory)
     phase_edges = np.linspace(0, 1, args.bins+1)
     bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     roi_mask = roi.check_inside_absolute(xs, ys)
-    
+
     for frame in data_set:
         bins_per_frame = frame.duration / bin_time_duration
         counts = np.nanmean(frame.image[roi_mask]) * np.sum(roi_mask)
@@ -105,7 +104,7 @@ def get_weighted_lc(data_set, image, args):
     lightcurve = np.zeros(args.bins) # Multiplier to the image
     exposures = np.zeros(args.bins)
     roi = Region.load(args.roi)
-    ephemeris = Ephemeris.from_file(args.eph)
+    ephemeris = Ephemeris(args.eph, data_set.get_timestamps())
     phase_edges = np.linspace(0, 1, args.bins+1)
     bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
@@ -187,13 +186,6 @@ def get_weighted_lc(data_set, image, args):
             ts_hessian += np.multiply.outer(weights, weights) * np.sum((m2 - m1*m1)*pixel_image[good_mask]**2)
 
         ts_inv_hessian = np.linalg.pinv(ts_hessian)
-
-        # import matplotlib.pyplot as plt # TODO
-        # fig, axs = plt.subplots(ncols=2)
-        # axs[0].imshow(ts_hessian, vmax=0)
-        # vmax = np.max(np.abs(ts_inv_hessian))
-        # axs[1].imshow(ts_inv_hessian, vmin=-vmax, vmax=vmax, cmap="RdBu")
-        # fig.savefig("dbg.png")
         
         # Perform the iterative step
         delta = ts_inv_hessian @ ts
@@ -202,11 +194,6 @@ def get_weighted_lc(data_set, image, args):
         lightcurve = np.maximum(lightcurve, 0.1)
         p99 = np.nanpercentile(np.abs(delta), 99)
         print("Iteration", iteration, "Median shift", np.nanmedian(delta), "Max shift", np.nanmax(np.abs(delta)), "99th percentile shift", p99)
-
-        import matplotlib.pyplot as plt # TODO
-        fig, ax = plt.subplots()
-        ax.plot((phase_edges[1:] + phase_edges[:-1]) / 2, lightcurve)
-        fig.savefig(f"dbg-{iteration}.png")
 
         if p99 < 0.001:
             break

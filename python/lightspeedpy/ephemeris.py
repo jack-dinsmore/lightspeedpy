@@ -8,7 +8,7 @@ from pint.models import model_builder
 pint.logging.setup(level="WARNING")
 
 class Ephemeris():
-    def __init__(self, parfile, timestamps, observatory):
+    def __init__(self, parfile, timestamps, observatory="LCO"):
         pint.observatory.topo_obs.TopoObs(observatory, location=EarthLocation.of_site(observatory))
 
         self.model = model_builder.get_model(parfile)

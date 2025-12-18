@@ -12,6 +12,14 @@ DEFAULT_BIAS = 199.5
 
 class DataSet:
     def __init__(self, filename, cr_cut=True, auto_bias=True, timing_offset=0):
+        """
+        Create a new data set
+        # Arguments
+        - filename: name of the first cube in the data set
+        - cr_cut: set to True to automatically remove cosmic rays
+        - auto_bias: set to True to subtract 199.5 ADC counts from the image as a very rough bias when not using a bias frame. If you are using a bias frame, this flag has no effect.
+        - timing offset: set to offset the TIMESTAMPs by a given number [seconds]
+        """
         directory = os.path.dirname(filename)
         filename = os.path.basename(filename)
         prefix = filename[:-8]
@@ -26,8 +34,8 @@ class DataSet:
         self.display_filenames()
 
         with fits.open(self.filenames[0]) as hdul:
-            self.header0 = dict(hdul[0].header)
-            self.header1 = dict(hdul[1].header)
+            self.header0 = hdul[0].header
+            self.header1 = hdul[1].header
             self.get_image_data(hdul)
             self.get_timing_data(hdul, timing_offset)
 
@@ -66,17 +74,13 @@ class DataSet:
 
     def get_timing_data(self, hdul, timing_offset=0):
         # Get timing data for this fileset. Note: this function should only be called on the first cube. get_image_data has to be run first
-        self.time_per_frame = (hdul[2].data["TIMESTAMP"][1] - hdul[2].data["TIMESTAMP"][0]) / float(self.frames_per_bundle)
+        self.time_per_frame = hdul[1].header["HIERARCH EXPOSURE TIME"]
         try:
             self.start_time = Time(hdul[0].header["GPSSTART"], format="isot")
         except:
             self.start_time = Time(0, format="mjd")
-        print(self.start_time.mjd)
         self.start_time = self.start_time.mjd * 3600 * 24 # start_time in units of seconds
-        self.start_time += 1 # ???
         self.start_time -= hdul[2].data["TIMESTAMP"][0] # start_time is now time that the last frame in the first bundle was read out
-        # self.start_time -= self.frames_per_bundle * self.time_per_frame # start_time is now time that the first frame in the first bundle was started
-        # self.start_time -= self.time_per_frame # start_time is now time that the first frame in the first bundle was started
         self.start_time -= hdul[1].header["HIERARCH TIMING READOUT TIME"] / 2# start_time is now time that the frame before the first frame was halfway through readout
         self.start_time -= timing_offset
 
@@ -94,31 +98,47 @@ class DataSet:
     def get_pixel_properties(self):
         if self.pixel_properties is None:
             if self.bias_data_set is None:
-                self.pixel_properties = PixelProperties(self)
+                self.pixel_properties = PixelProperties(self, False)
             else:
-                # Take the larger of the two data_sets
-                if self.num_frames() > self.bias_data_set.num_frames():
-                    print("Using the pixel properties of the data set")
-                    self.pixel_properties = PixelProperties(self)
-                else:
-                    print("Using the pixel properties of the bias")
-                    self.pixel_properties = PixelProperties(self.bias_data_set)
+                start_x = int(self.header1["HIERARCH SUBARRAY VPOS"]) - int(self.bias_data_set.header1["HIERARCH SUBARRAY VPOS"])
+                start_y = int(self.header1["HIERARCH SUBARRAY HPOS"]) - int(self.bias_data_set.header1["HIERARCH SUBARRAY HPOS"])
+
+                self.pixel_properties = PixelProperties(self.bias_data_set, True, window=(start_x, start_x+self.image_shape[0], start_y, start_y+self.image_shape[1]))
+
+                self.pixel_properties.bias *= 0 # Turn off the bias when using the bias data set to determine pixel properties, as the bias has already been subtracted.
+
         return self.pixel_properties
 
 
     def set_bias(self, bias):
-        if bias == "self":
-            self.bias = self.get_pixel_properties().bias + DEFAULT_BIAS / ADU_PER_ELECTRON
-        else:
-            data_set = DataSet(bias, cr_cut=False, auto_bias=False)
-            self.bias_data_set = data_set
+        if self.pixel_properties is not None:
+            raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You cannot do this because get_pixel_properties needs a good bias to function.")
+        
+        bias_set = DataSet(bias, cr_cut=False, auto_bias=False)
+        self.bias_data_set = bias_set
 
-            frame_total = np.zeros(data_set.image_shape)
-            n_frames = 0
-            for frame in data_set:
-                frame_total += frame.image
-                n_frames += 1
-            self.bias = frame_total / n_frames
+        frame_total = np.zeros(bias_set.image_shape)
+        n_frames = 0
+        for frame in bias_set.iterator(max_frames=10_000):
+            frame_total += frame.image
+            n_frames += 1
+        bias_image = frame_total / n_frames
+
+        # Trim down the bias image to be the correct size
+        start_x = int(self.header1["HIERARCH SUBARRAY VPOS"]) - int(bias_set.header1["HIERARCH SUBARRAY VPOS"])
+        start_y = int(self.header1["HIERARCH SUBARRAY HPOS"]) - int(bias_set.header1["HIERARCH SUBARRAY HPOS"])
+        self.bias = bias_image[start_x:start_x+self.image_shape[0], start_y:start_y+self.image_shape[1]]
+
+    def set_self_bias(self):
+        if self.bias_data_set is None:
+            self.bias = self.get_pixel_properties().bias + DEFAULT_BIAS / ADU_PER_ELECTRON
+            self.pixel_properties = None
+            self.get_pixel_properties()
+
+        else:
+            self.bias += self.get_pixel_properties().bias
+            self.pixel_properties = None
+            self.get_pixel_properties()
 
     def set_dark(self, dark):
         data_set = DataSet(dark)
@@ -144,18 +164,36 @@ class DataSet:
         self.flat = frame_total / n_frames
 
     def __iter__(self):
-        return DataSetIterator(self)
+        return self.iterator().__iter__()
+
+    def iterator(self, use_bar=True, max_frames=None):
+        return DataSetIteratorRet(self, use_bar, max_frames)
+    
+class DataSetIteratorRet:
+    def __init__(self, *args):
+        self.args = args
+
+    def __iter__(self):
+        return DataSetIterator(*self.args)
 
 class DataSetIterator:
-    def __init__(self, data_set):
+    def __init__(self, data_set, use_bar, max_frames):
         self.data_set = data_set
         self.open_file = None
         self.file_index = 0
         self.first_run = True
+        self.total_frame_index = 0
+        self.max_frames = max_frames
 
         self.renew_file()
         n_frames = data_set.frames_per_bundle*self.n_bundles*len(data_set.filenames)
-        self.bar = tqdm.tqdm(total=n_frames)
+        if use_bar:
+            if max_frames is not None and max_frames < n_frames:
+                self.bar = tqdm.tqdm(total=max_frames, colour="green")
+            else:
+                self.bar = tqdm.tqdm(total=n_frames)
+        else:
+            self.bar = None
 
     def renew_file(self):
         if self.open_file is not None:
@@ -166,6 +204,12 @@ class DataSetIterator:
         self.n_bundles = self.open_file[1].data.shape[0]
 
     def __next__(self):
+        self.total_frame_index += 1
+        if self.max_frames is not None and self.total_frame_index > self.max_frames:
+            self.open_file.close()
+            self.bar.close()
+            raise StopIteration
+        
         if not self.first_run:
             # Increment the counters
             self.frame_index += 1
@@ -188,7 +232,8 @@ class DataSetIterator:
         timestamp += self.data_set.time_per_frame * self.frame_index
         timestamp += self.data_set.start_time
 
-        self.bar.update(1)
+        if self.bar is not None:
+            self.bar.update(1)
         self.first_run = False
 
         return Frame(raw_image, timestamp, self.data_set)
@@ -203,6 +248,7 @@ class Frame:
         self.image = raw_image.astype(float) / ADU_PER_ELECTRON
         self.duration = data_set.time_per_frame
         self.timestamp = timestamp # Seconds
+
 
         if data_set.bias is not None:
             self.image -= data_set.bias

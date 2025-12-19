@@ -5,6 +5,8 @@ from .regions import Region
 from .ephemeris import Ephemeris
 
 MAX_N_SCALE = 2
+SMEAR_FRAME = False # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
+WEIGHTED_FLAT_P = 0.1
 
 def delta_phase(phase_start, phase_end):
     if phase_end > phase_start:
@@ -32,9 +34,6 @@ class Lightcurve:
         hdu.header["EXPOSURE"] = np.sum(self.exposures)
         hdu.header["DURATION"] = self.duration
         hdu.header["NU"] = self.ephemeris.nu
-        hdu.header["NUDOT"] = self.ephemeris.nudot
-        hdu.header["NUDDOT"] = self.ephemeris.nuddot
-        hdu.header["PEPOCH"] = self.ephemeris.pepoch / (3600*24)
 
         for key, value in vars(args).items():
             if key == "func": continue
@@ -43,6 +42,8 @@ class Lightcurve:
             hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
         for key, value in data_set.header1.items():
             if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
+                if len(key) > 8:
+                    key = key[-8:]
                 hdu.header[key] = value
 
         # Write to file, table in HDU 1
@@ -74,23 +75,59 @@ def get_bin_weights(phase_edges, start_phase, end_phase):
     
     return weights
 
-def get_linear_lc(data_set, args):
-    electrons = np.zeros(args.bins)
-    exposures = np.zeros(args.bins)
-    roi = Region.load(args.roi)
-    ephemeris = Ephemeris.from_file(args.eph)
-    phase_edges = np.linspace(0, 1, args.bins+1)
+def get_summed_lc(data_set, n_bins, reg_file, ephemeris):
+    # Does not use the image
+    electrons = np.zeros(n_bins)
+    exposures = np.zeros(n_bins)
+    roi = Region.load(reg_file)
+    phase_edges = np.linspace(0, 1, n_bins+1)
     bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     roi_mask = roi.check_inside_absolute(xs, ys)
-    
+
     for frame in data_set:
         bins_per_frame = frame.duration / bin_time_duration
         counts = np.nanmean(frame.image[roi_mask]) * np.sum(roi_mask)
 
-        start_phase = ephemeris.get_phase(frame.timestamp)
-        end_phase = ephemeris.get_phase(frame.timestamp+frame.duration)
-        weights = get_bin_weights(phase_edges, start_phase, end_phase)
+        if SMEAR_FRAME:
+            start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
+            end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
+            weights = get_bin_weights(phase_edges, start_phase, end_phase)
+        else:
+            phase = ephemeris.get_phase(frame.timestamp)
+            weights = np.zeros(n_bins)
+            weights[np.digitize(phase, phase_edges)-1] = 1
+
+        count_per_bin = counts / bins_per_frame
+        electrons += count_per_bin*weights
+        exposures += bin_time_duration*weights
+        frame_duration = frame.duration
+
+    fluxes = electrons / exposures # Counts per second
+    return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
+
+def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
+    # Does not use the image
+    electrons = np.zeros(n_bins)
+    exposures = np.zeros(n_bins)
+    roi = Region.load(reg_file)
+    phase_edges = np.linspace(0, 1, n_bins+1)
+    bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
+    xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
+    roi_mask = roi.check_inside_absolute(xs, ys)
+
+    for frame in data_set:
+        bins_per_frame = frame.duration / bin_time_duration
+        counts = np.nanmean(np.round(frame.image[roi_mask])) * np.sum(roi_mask)
+
+        if SMEAR_FRAME:
+            start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
+            end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
+            weights = get_bin_weights(phase_edges, start_phase, end_phase)
+        else:
+            phase = ephemeris.get_phase(frame.timestamp)
+            weights = np.zeros(n_bins)
+            weights[np.digitize(phase, phase_edges)-1] = 1
 
         count_per_bin = counts / bins_per_frame
         electrons += count_per_bin*weights
@@ -100,16 +137,18 @@ def get_linear_lc(data_set, args):
     fluxes = electrons / exposures # Counts per bin
     return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
 
-def get_weighted_lc(data_set, image, args):
+def get_weighted_lc(data_set, image, n_bins, reg_file, ephemeris):
     # Set up lightcurve
-    lightcurve = np.zeros(args.bins) # Multiplier to the image
-    exposures = np.zeros(args.bins)
-    roi = Region.load(args.roi)
-    ephemeris = Ephemeris.from_file(args.eph)
-    phase_edges = np.linspace(0, 1, args.bins+1)
+    lightcurve = np.zeros(n_bins) # Multiplier to the image
+    exposures = np.zeros(n_bins)
+    roi = Region.load(reg_file)
+    phase_edges = np.linspace(0, 1, n_bins+1)
     bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     roi_mask = roi.check_inside_absolute(xs, ys)
+    
+    if image is None:
+        image = np.ones(data_set.image_shape)
 
     # Get pixel data
     bad_pixels = roi_mask & np.isnan(image)
@@ -124,9 +163,15 @@ def get_weighted_lc(data_set, image, args):
     for frame in data_set:
         bins_per_frame = frame.duration / bin_time_duration
 
-        start_phase = ephemeris.get_phase(frame.timestamp)
-        end_phase = ephemeris.get_phase(frame.timestamp+frame.duration)
-        weights = get_bin_weights(phase_edges, start_phase, end_phase)
+        if SMEAR_FRAME:
+            start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
+            end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
+            weights = get_bin_weights(phase_edges, start_phase, end_phase)
+        else:
+            phase = ephemeris.get_phase(frame.timestamp)
+            weights = np.zeros(n_bins)
+            weights[np.digitize(phase, phase_edges)-1] = 1
+
         frame_weights.append(np.copy(weights))
         frame_duration = frame.duration
 
@@ -134,7 +179,7 @@ def get_weighted_lc(data_set, image, args):
         counts = np.nanmean(frame.image[roi_mask]) * np.sum(roi_mask)
         count_per_bin = counts / bins_per_frame
         lightcurve += count_per_bin*weights
-        exposures += bin_time_duration*weights
+        exposures += frame.duration*weights
 
     lightcurve /= np.mean(lightcurve)
     lightcurve /= bins_per_frame
@@ -187,13 +232,6 @@ def get_weighted_lc(data_set, image, args):
             ts_hessian += np.multiply.outer(weights, weights) * np.sum((m2 - m1*m1)*pixel_image[good_mask]**2)
 
         ts_inv_hessian = np.linalg.pinv(ts_hessian)
-
-        # import matplotlib.pyplot as plt # TODO
-        # fig, axs = plt.subplots(ncols=2)
-        # axs[0].imshow(ts_hessian, vmax=0)
-        # vmax = np.max(np.abs(ts_inv_hessian))
-        # axs[1].imshow(ts_inv_hessian, vmin=-vmax, vmax=vmax, cmap="RdBu")
-        # fig.savefig("dbg.png")
         
         # Perform the iterative step
         delta = ts_inv_hessian @ ts
@@ -202,11 +240,6 @@ def get_weighted_lc(data_set, image, args):
         lightcurve = np.maximum(lightcurve, 0.1)
         p99 = np.nanpercentile(np.abs(delta), 99)
         print("Iteration", iteration, "Median shift", np.nanmedian(delta), "Max shift", np.nanmax(np.abs(delta)), "99th percentile shift", p99)
-
-        import matplotlib.pyplot as plt # TODO
-        fig, ax = plt.subplots()
-        ax.plot((phase_edges[1:] + phase_edges[:-1]) / 2, lightcurve)
-        fig.savefig(f"dbg-{iteration}.png")
 
         if p99 < 0.001:
             break
@@ -218,3 +251,55 @@ def get_weighted_lc(data_set, image, args):
     lightcurve /= frame_duration # Now counts per second
 
     return Lightcurve(phase_edges, lightcurve, exposures, frame_duration, ephemeris)
+
+
+def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
+    # Does not use the image
+    roi = Region.load(reg_file)
+    phase_edges = np.linspace(0, 1, n_bins+1)
+    bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
+    xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
+    roi_mask = roi.check_inside_absolute(xs, ys)
+    w_denom = 1/(2*data_set.get_pixel_properties().widths**2)[roi_mask]
+    g_norm = np.sqrt(2*np.pi*data_set.get_pixel_properties().widths**2)[roi_mask]
+
+    if image is None:
+        image = np.ones(data_set.image_shape)
+
+    numer = np.zeros(n_bins)
+    denom = np.zeros(n_bins)
+    exposures = np.zeros(n_bins)
+
+    for frame in data_set:
+        masked_image = frame.image[roi_mask]
+        assert(not SMEAR_FRAME)# I haven't implemented the approach for not smeared frames
+        if SMEAR_FRAME:
+            start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
+            end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
+            weights = get_bin_weights(phase_edges, start_phase, end_phase)
+        else:
+            phase = ephemeris.get_phase(frame.timestamp)
+            weights = np.zeros(n_bins)
+            weights[np.digitize(phase, phase_edges)-1] = 1
+
+        good_mask = ~np.isnan(masked_image)
+
+        p0 = np.exp(-masked_image**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
+        p1 = np.exp(-(masked_image-1)**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
+        odds = (p1/p0)[good_mask]
+        
+        # TODO I turned off PSF weighting
+        # numer += weights*np.sum(masked_image[good_mask] * (odds - 1))
+        # denom += weights*np.sum((masked_image[good_mask]*odds)**2)
+        numer += weights*np.sum((odds - 1))
+        denom += weights*np.sum((odds)**2)
+
+        exposures += weights*bin_time_duration
+        frame_duration = frame.duration
+
+
+    fluxes = numer / denom # Counts per bin per frame
+    fluxes /= frame_duration # Counts per bin per second # TODO normalization seems wrong
+    return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
+
+# TODO try without psf weights

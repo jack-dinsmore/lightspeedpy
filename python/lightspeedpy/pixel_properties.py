@@ -33,25 +33,31 @@ def make_m1m2_grid():
 GRID_INTERPOLATOR = make_m1m2_grid()
 
 class PixelProperties:
-    def __init__(self, data_set):
+    def __init__(self, data_set, is_bias, window=None):
         m1_image = np.zeros(data_set.image_shape)
         m2_image = np.zeros(data_set.image_shape)
         n_frames = np.zeros(data_set.image_shape)
-
-        n_total_frames = 0
         
-        for frame in data_set:
+        for frame in data_set.iterator(max_frames=10_000):
             clipped_image = frame.image - np.floor(frame.image + 0.5)
             good_mask = ~np.isnan(frame.image)
             m1_image[good_mask] += clipped_image[good_mask]
             m2_image[good_mask] += clipped_image[good_mask]**2
             n_frames[good_mask] += 1
-            n_total_frames += 1
-            if n_total_frames >= 10_000: break # The mean and bias are pretty well measured at this point
 
         m1_image /= n_frames
         m2_image /= n_frames
 
-        output = GRID_INTERPOLATOR((m1_image, m2_image))
-        self.bias = output[:,:,0]
-        self.widths = output[:,:,1]
+        if is_bias:
+            self.bias = m1_image
+            self.widths = np.sqrt(m2_image - m1_image**2)
+        else:
+            output = GRID_INTERPOLATOR((m1_image, m2_image))
+            self.bias = output[:,:,0]
+            self.widths = output[:,:,1]
+
+        self.widths = np.sqrt(m2_image - m1_image**2)# TODO
+
+        if window is not None:
+            self.bias = self.bias[window[0]:window[1], window[2]:window[3]]
+            self.widths = self.widths[window[0]:window[1], window[2]:window[3]]

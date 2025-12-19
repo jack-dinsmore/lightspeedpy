@@ -134,7 +134,7 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
         exposures += bin_time_duration*weights
         frame_duration = frame.duration
 
-    fluxes = electrons / exposures # Counts per second
+    fluxes = electrons / exposures # Counts per bin
     return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
 
 def get_weighted_lc(data_set, image, n_bins, reg_file, ephemeris):

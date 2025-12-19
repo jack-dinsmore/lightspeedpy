@@ -11,6 +11,10 @@ def get_dataset(args):
         raise Exception(f"Cannot save to {args.output}: file already exists and clobber is False")
     
     data_set = DataSet(args.input, timing_offset=args.timing_offset)
+
+    print("Loaded files")
+    data_set.display_filenames()
+
     if args.bias is not None:
         data_set.set_bias(args.bias)
     if args.self_bias:
@@ -25,7 +29,7 @@ def get_dataset(args):
     if args.flat is not None:
         data_set.set_dark(args.flat)
     else:
-        print("WARNING: No flat provided")
+        print("WARNING: display_filenamesNo flat provided")
     return data_set
 
 def get_image(args):
@@ -67,11 +71,11 @@ def get_fft(args):
     fft.save(data_set, args)
 
 def add_dataset_args(parser):
-    parser.add_argument("--input", required=True, help="File name of dataset")
+    parser.add_argument("--input", nargs='+', required=True, help="File name of dataset")
     parser.add_argument("--output", required=True, help="File name of output image")
-    parser.add_argument("--bias", help="File name of bias")
+    parser.add_argument("--bias", nargs='+', help="File name of bias")
     parser.add_argument("--self-bias", help="Measure bias from self", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--dark", help="File name of dark")
-    parser.add_argument("--flat", help="File name of flat")
+    parser.add_argument("--dark", nargs='+', help="File name of dark")
+    parser.add_argument("--flat", nargs='+', help="File name of flat")
     parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)

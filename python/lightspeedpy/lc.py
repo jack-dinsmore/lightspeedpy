@@ -179,7 +179,7 @@ def get_weighted_lc(data_set, image, n_bins, reg_file, ephemeris):
         counts = np.nanmean(frame.image[roi_mask]) * np.sum(roi_mask)
         count_per_bin = counts / bins_per_frame
         lightcurve += count_per_bin*weights
-        exposures += bin_time_duration*weights
+        exposures += frame.duration*weights
 
     lightcurve /= np.mean(lightcurve)
     lightcurve /= bins_per_frame

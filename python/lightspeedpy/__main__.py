@@ -2,7 +2,7 @@ import argparse
 from . import utils
 
 def main():
-    parser = argparse.ArgumentParser(prog="process", description="Lightspeed processing CLI")
+    parser = argparse.ArgumentParser(prog="lightspeedpy", description="Lightspeed processing CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     parser_image = subparsers.add_parser("image", help="Process a dataset, creating a merged image")

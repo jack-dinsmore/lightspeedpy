@@ -45,6 +45,10 @@ def save_image(image, data_set, args):
     
     for key, value in vars(args).items():
         if key == "func": continue
+        if type(value) == list:
+            for i, v in enumerate(value):
+                hdu.header[f"{key}i"] = v
+            continue
         hdu.header[key] = value
     if "GPSSTART" in data_set.header0:
         hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]

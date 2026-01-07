@@ -10,7 +10,7 @@ def get_dataset(args):
     if os.path.exists(args.output) and not args.clobber:
         raise Exception(f"Cannot save to {args.output}: file already exists and clobber is False")
     
-    data_set = DataSet(args.input, timing_offset=args.timing_offset)
+    data_set = DataSet.from_files(args.input, timing_offset=args.timing_offset)
 
     print("Loaded files")
     data_set.display_filenames()
@@ -27,9 +27,9 @@ def get_dataset(args):
     else:
         print("WARNING: No dark provided")
     if args.flat is not None:
-        data_set.set_dark(args.flat)
+        data_set.set_flat(args.flat)
     else:
-        print("WARNING: display_filenamesNo flat provided")
+        print("WARNING: No flat provided")
     return data_set
 
 def get_image(args):

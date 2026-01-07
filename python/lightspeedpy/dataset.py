@@ -11,23 +11,21 @@ ADU_PER_ELECTRON = 8.9
 DEFAULT_BIAS = 199.5
 
 class DataSet:
-    def __init__(self, filenames, cr_cut=True, auto_bias=True, timing_offset=0):
-        self.runs = []
-        self.image_shape = None
-        self.header0 = None
-        self.header1 = None
-        if len(filenames) == 0:
+    def __init__(self, runs):
+        if len(runs) == 0:
             raise Exception("You must provide at least one filename")
-        for filename in filenames:
-            run = SingleRun(filename, cr_cut, auto_bias, timing_offset)
-            if self.image_shape is None:
-                self.image_shape = run.image_shape
-                self.header0 = run.header0
-                self.header1 = run.header1
+        self.runs = runs
+        self.image_shape = runs[0].image_shape
+        self.header0 = runs[0].header0
+        self.header1 = runs[0].header1
+        self.flat = self.runs[0].flat
+        for run in runs:
             if run.image_shape != self.image_shape:
                 raise Exception("You cannot form one data set out of runs with different subarrays")
-            self.runs.append(run)
-        self.flat = self.runs[0].flat
+
+    def from_files(filenames, cr_cut=True, auto_bias=True, timing_offset=0):
+        runs = [SingleRun(filename, cr_cut, auto_bias, timing_offset) for filename in filenames]
+        return DataSet(runs)
 
     def iterator(self, use_bar=True, max_frames=None):
         return DataSetIteratorRet(self, use_bar, max_frames)
@@ -62,12 +60,12 @@ class DataSet:
 
     def set_dark(self, dark):
         for run in self.runs:
-            run.set_flat(dark)
+            run.set_dark(dark)
 
     def set_flat(self, flat):
         for run in self.runs:
             run.set_flat(flat)
-        self.flat = self.runs[0].flat
+        self.flat = self.runs[0].flat # TODO this is a stopgap to divide by flat
     
 class DataSetIteratorRet:
     def __init__(self, *args):
@@ -163,13 +161,17 @@ class SingleRun:
 
     def get_pixel_properties(self):
         if self.pixel_properties is None:
-            if self.bias_data_set is None:
-                self.pixel_properties = PixelProperties(self, False)
+            if self.bias_data_sets is None:
+                self.pixel_properties = PixelProperties(DataSet([self]), False)
             else:
-                start_x = int(self.header1["HIERARCH SUBARRAY VPOS"]) - int(self.bias_data_set.header1["HIERARCH SUBARRAY VPOS"])
-                start_y = int(self.header1["HIERARCH SUBARRAY HPOS"]) - int(self.bias_data_set.header1["HIERARCH SUBARRAY HPOS"])
+                my_vpos = int(self.header1["HIERARCH SUBARRAY VPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+                my_hpos = int(self.header1["HIERARCH SUBARRAY HPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+                bias_vpos = int(self.bias_data_set.header1["HIERARCH SUBARRAY VPOS"]) if self.bias_data_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+                bias_hpos = int(self.bias_data_set.header1["HIERARCH SUBARRAY HPOS"]) if self.bias_data_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+                start_x = my_vpos - bias_vpos
+                start_y = my_hpos - bias_hpos
 
-                self.pixel_properties = PixelProperties(self.bias_data_set, True, window=(start_x, start_x+self.image_shape[0], start_y, start_y+self.image_shape[1]))
+                self.pixel_properties = PixelProperties(DataSet([self.bias_data_set]), True, window=(start_x, start_x+self.image_shape[0], start_y, start_y+self.image_shape[1]))
 
                 self.pixel_properties.bias *= 0 # Turn off the bias when using the bias data set to determine pixel properties, as the bias has already been subtracted.
 
@@ -179,7 +181,7 @@ class SingleRun:
         if self.pixel_properties is not None:
             raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You cannot do this because get_pixel_properties needs a good bias to function.")
         
-        bias_set = DataSet(bias, cr_cut=False, auto_bias=False)
+        bias_set = DataSet.from_files(bias, cr_cut=False, auto_bias=False)
         self.bias_data_set = bias_set
 
         frame_total = np.zeros(bias_set.image_shape)
@@ -190,12 +192,16 @@ class SingleRun:
         bias_image = frame_total / n_frames
 
         # Trim down the bias image to be the correct size
-        start_x = int(self.header1["HIERARCH SUBARRAY VPOS"]) - int(bias_set.header1["HIERARCH SUBARRAY VPOS"])
-        start_y = int(self.header1["HIERARCH SUBARRAY HPOS"]) - int(bias_set.header1["HIERARCH SUBARRAY HPOS"])
+        my_vpos = int(self.header1["HIERARCH SUBARRAY VPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+        my_hpos = int(self.header1["HIERARCH SUBARRAY HPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+        bias_vpos = int(bias_set.header1["HIERARCH SUBARRAY VPOS"]) if bias_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+        bias_hpos = int(bias_set.header1["HIERARCH SUBARRAY HPOS"]) if bias_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
+        start_x = my_vpos - bias_vpos
+        start_y = my_hpos - bias_hpos
         self.bias = bias_image[start_x:start_x+self.image_shape[0], start_y:start_y+self.image_shape[1]]
 
     def set_self_bias(self):
-        if self.bias_data_set is None:
+        if self.bias_data_sets is None:
             self.bias = self.get_pixel_properties().bias + DEFAULT_BIAS / ADU_PER_ELECTRON
             self.pixel_properties = None
             self.get_pixel_properties()
@@ -206,7 +212,7 @@ class SingleRun:
             self.get_pixel_properties()
 
     def set_dark(self, dark):
-        data_set = DataSet(dark)
+        data_set = DataSet.from_files(dark)
         data_set.bias = self.bias
         frame_total = np.zeros(data_set.image_shape)
         n_frames = np.zeros(data_set.image_shape, int)
@@ -217,7 +223,7 @@ class SingleRun:
         self.dark = frame_total / n_frames
 
     def set_flat(self, flat):
-        data_set = DataSet(flat)
+        data_set = DataSet.from_files(flat)
         data_set.bias = self.bias
         data_set.dark = self.dark
         frame_total = np.zeros(data_set.image_shape)
@@ -227,6 +233,13 @@ class SingleRun:
             frame_total[good_mask] += frame.image[good_mask]
             n_frames[good_mask] +=1
         self.flat = frame_total / n_frames
+        self.flat /= np.nanmax(self.flat)
+
+        import matplotlib.pyplot as plt
+        self.flat[~np.isfinite(self.flat)] = 0 # TODO
+        print(self.flat)
+        plt.imsave("flat.png", self.flat, vmin=0, vmax=1)
+
 
 class DataSetIterator:
     def __init__(self, data_set, use_bar, max_frames):
@@ -323,7 +336,7 @@ class Frame:
 
 def cosmic_ray_filter(image):
     # Compute laplacian
-    step=3 # Pixels
+    step=1 # Pixels
     img = np.pad(image, step, mode='constant')
     laplacian = (
         img[step:-step, 2*step:] +
@@ -332,6 +345,7 @@ def cosmic_ray_filter(image):
         img[step:-step, :-2*step] -
         4 * img[step:-step, step:-step]
     )/step**2
+    cr_sensor = -laplacian/image
 
-    # Mask CRs
-    image[laplacian < -0.8] = np.nan
+    # Mask CRs TODO is this working well for pulsars? I made it for LH
+    image[cr_sensor > 2] = np.nan

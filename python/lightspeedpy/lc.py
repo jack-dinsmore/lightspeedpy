@@ -37,7 +37,11 @@ class Lightcurve:
 
         for key, value in vars(args).items():
             if key == "func": continue
-            hdu.header[key] = value
+            if type(value) is list:
+                for i, item in enumerate(value):
+                    hdu.header[f"{key}{i}"] = item
+            else:
+                hdu.header[key] = value
         if "GPSSTART" in data_set.header0:
             hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
         for key, value in data_set.header1.items():
@@ -260,8 +264,10 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     bin_time_duration = (phase_edges[1] - phase_edges[0]) / ephemeris.nu
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     roi_mask = roi.check_inside_absolute(xs, ys)
-    w_denom = 1/(2*data_set.get_pixel_properties().widths**2)[roi_mask]
-    g_norm = np.sqrt(2*np.pi*data_set.get_pixel_properties().widths**2)[roi_mask]
+
+    pixel_properties = data_set.runs[0].get_pixel_properties() # TODO assumes these all have the same properties
+    w_denom = 1/(2*pixel_properties.widths**2)[roi_mask]
+    g_norm = np.sqrt(2*np.pi*pixel_properties.widths**2)[roi_mask]
 
     if image is None:
         image = np.ones(data_set.image_shape)

@@ -8,7 +8,7 @@ def get_lc(args):
 
     # data_set.bootstrap()
 
-    ephemeris = Ephemeris(args.eph, data_set.get_timestamps())
+    ephemeris = Ephemeris(args.eph, data_set._get_timestamps())
 
     if args.mode == "sum":
         lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)

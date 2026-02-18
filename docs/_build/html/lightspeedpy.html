@@ -48,26 +48,36 @@
 </ol>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>filenames</strong> (<em>list</em><em> of </em><em>str</em>) – List of files to include</p>
-</dd>
-<dt class="field-even">Keyword Arguments<span class="colon">:</span></dt>
-<dd class="field-even"><p><strong>cut_cr</strong> (<em>bool</em><em>, </em><em>optional</em>) – Set to False to no longer cut CRs.</p>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filenames</strong> (<em>list</em><em> of </em><em>str</em>) – List of files to include</p></li>
+<li><p><strong>cut_cr</strong> (<em>bool</em><em>, </em><em>optional</em>) – Set to False to no longer cut CRs.</p></li>
+</ul>
 </dd>
 </dl>
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.apply_timing_offset">
-<span class="sig-name descname"><span class="pre">apply_timing_offset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hdul</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timing_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.apply_timing_offset" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<span class="sig-name descname"><span class="pre">apply_timing_offset</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">timing_offset</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.apply_timing_offset" title="Link to this definition">¶</a></dt>
+<dd><p>Apply a timing offset to the data set. Now, a frame read at <cite>timing_offset</cite> will be treated as having time 0.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>timing_offset</strong> (<em>float</em>) – Time offset, in seconds</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.bootstrap">
 <span class="sig-name descname"><span class="pre">bootstrap</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.bootstrap" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Resamples the file names for use in bootstrapping. If you want to estimate uncertainties, redo your analysis with many <a class="reference internal" href="#lightspeedpy.DataSet.bootstrap" title="lightspeedpy.DataSet.bootstrap"><code class="xref py py-meth docutils literal notranslate"><span class="pre">DataSet.bootstrap()</span></code></a>’ed data sets and calculate the standard deviation of your results.</p>
+<p class="rubric">Notes</p>
+<p>You should never bootstrap a data set twice. Instead, you should always create a copy of the original data set with copy.deepcopy and then bootstrap the copy.</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.display_filenames">
 <span class="sig-name descname"><span class="pre">display_filenames</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.display_filenames" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Print all the filenames in the data set</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.from_dir">
@@ -94,18 +104,8 @@
 </ul>
 </dd>
 </dl>
-<p>:keyword See <a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code></a>:</p>
+<p>:param See <a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code></a>:</p>
 </dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="lightspeedpy.DataSet.get_image_data">
-<span class="sig-name descname"><span class="pre">get_image_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hdul</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.get_image_data" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="lightspeedpy.DataSet.get_timestamps">
-<span class="sig-name descname"><span class="pre">get_timestamps</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.get_timestamps" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.iterator">
@@ -124,48 +124,100 @@
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.num_frames">
 <span class="sig-name descname"><span class="pre">num_frames</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.num_frames" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Counts the number of frames in the data set</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The number of frames in the data set</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.pixel_properties">
 <span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">pixel_properties</span></span><a class="headerlink" href="#lightspeedpy.DataSet.pixel_properties" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>PixelProperties
+Pixel properties of the data set</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.self_bias">
 <span class="sig-name descname"><span class="pre">self_bias</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.self_bias" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Estimate an observation from these data. This can only be done accurately for very fast readout of a faint source, where most of the pixels detect zero photons.</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.set_bias">
 <span class="sig-name descname"><span class="pre">set_bias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">bias_data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.set_bias" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Set the bias</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>bias_data_set</strong> (<a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – A <a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code></a> containing the bias observation</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.set_dark">
 <span class="sig-name descname"><span class="pre">set_dark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dark_data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.set_dark" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Set the dark</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>dark_data_set</strong> (<a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – A <a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code></a> containing the dark observation</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.set_flat">
 <span class="sig-name descname"><span class="pre">set_flat</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">flat_data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.set_flat" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Set the flat</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>flat_data_set</strong> (<a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – A <a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code></a> containing the flat observation</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.DataSet.stack">
 <span class="sig-name descname"><span class="pre">stack</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.DataSet.stack" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Obtain the average image of the data cube.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The average image of the cube, in electrons.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>array-like</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>Same keyword arguments as <a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code></a>. For keyword arguments you do not provide, the values you passed to the data set constructor will be used.</p>
+</dd></dl>
 
 </dd></dl>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="lightspeedpy.Ephemeris">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">lightspeedpy.</span></span><span class="sig-name descname"><span class="pre">Ephemeris</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parfile</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timestamps</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">observatory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'LCO'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.Ephemeris" title="Link to this definition">¶</a></dt>
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">lightspeedpy.</span></span><span class="sig-name descname"><span class="pre">Ephemeris</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parfile</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data_set</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">observatory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'LCO'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.Ephemeris" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Class to contain a PINT ephemeris and assign phases to lightspeed data. Ephemerides are saved in the lightspeedpy/tmp directory so that they don’t have to be recomputed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>parfile</strong> (<em>str</em>) – File name of the PINT ephemeris file</p></li>
+<li><p><strong>data_set</strong> (<a class="reference internal" href="#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – The data set to create timestamps for</p></li>
+<li><p><strong>observatory</strong> (<em>str</em><em>, </em><em>optional</em>) – Observatory where Lightspeed was. Default: LCO</p></li>
+</ul>
+</dd>
+</dl>
 <dl class="py method">
 <dt class="sig sig-object py" id="lightspeedpy.Ephemeris.get_phase">
 <span class="sig-name descname"><span class="pre">get_phase</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">time</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.Ephemeris.get_phase" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Returns the phase (0 to 1) corresponding to a specific time</p>
+</dd></dl>
 
 </dd></dl>
 
@@ -173,9 +225,86 @@
 <dt class="sig sig-object py" id="lightspeedpy.Frame">
 <span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">lightspeedpy.</span></span><span class="sig-name descname"><span class="pre">Frame</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">raw_image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timestamp</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">duration</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.Frame" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
-<p># Attributes
-* image contains the frame image (float) in units of electrons. If darks, biases, and cr cuts were set, they are already subtracted
-* timestamp contains the time in seconds after camera start</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="lightspeedpy.Frame.image">
+<span class="sig-name descname"><span class="pre">image</span></span><a class="headerlink" href="#lightspeedpy.Frame.image" title="Link to this definition">¶</a></dt>
+<dd><p>Contains the frame image in units of electrons. If darks and biases were set, they are already subtracted. The flat was not included, nor the QE</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="lightspeedpy.Frame.timestamp">
+<span class="sig-name descname"><span class="pre">timestamp</span></span><a class="headerlink" href="#lightspeedpy.Frame.timestamp" title="Link to this definition">¶</a></dt>
+<dd><p>Time in seconds after camera start</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="lightspeedpy.Frame.duration">
+<span class="sig-name descname"><span class="pre">duration</span></span><a class="headerlink" href="#lightspeedpy.Frame.duration" title="Link to this definition">¶</a></dt>
+<dd><p>Frame time in seconds</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="lightspeedpy.PixelProperties">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">lightspeedpy.</span></span><span class="sig-name descname"><span class="pre">PixelProperties</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">bias</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">widths</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source_data_set</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dest_data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.PixelProperties" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Biases and noise of each pixel in the data set. Use <a class="reference internal" href="#lightspeedpy.PixelProperties.from_data" title="lightspeedpy.PixelProperties.from_data"><code class="xref py py-meth docutils literal notranslate"><span class="pre">PixelProperties.from_data()</span></code></a> or <a class="reference internal" href="#lightspeedpy.PixelProperties.from_bias" title="lightspeedpy.PixelProperties.from_bias"><code class="xref py py-meth docutils literal notranslate"><span class="pre">PixelProperties.from_bias()</span></code></a> to create it.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="lightspeedpy.PixelProperties.bias">
+<span class="sig-name descname"><span class="pre">bias</span></span><a class="headerlink" href="#lightspeedpy.PixelProperties.bias" title="Link to this definition">¶</a></dt>
+<dd><p>Image of biases of each pixel</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="lightspeedpy.PixelProperties.widths">
+<span class="sig-name descname"><span class="pre">widths</span></span><a class="headerlink" href="#lightspeedpy.PixelProperties.widths" title="Link to this definition">¶</a></dt>
+<dd><p>Noises in each pixel, defined as the standard deviation of the Gaussian error approximation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lightspeedpy.PixelProperties.default">
+<span class="sig-name descname"><span class="pre">default</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.PixelProperties.default" title="Link to this definition">¶</a></dt>
+<dd><p>Get the default pixel properties for a data set with no bias and not self-biased.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lightspeedpy.PixelProperties.from_bias">
+<span class="sig-name descname"><span class="pre">from_bias</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dest_data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.PixelProperties.from_bias" title="Link to this definition">¶</a></dt>
+<dd><p>Get the pixel properties of a bias data set</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="lightspeedpy.PixelProperties.from_data">
+<span class="sig-name descname"><span class="pre">from_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dest_data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.PixelProperties.from_data" title="Link to this definition">¶</a></dt>
+<dd><p>Get the pixel properties of a faint, rapid readout data set</p>
+</dd></dl>
+
 </dd></dl>
 
 <dl class="py class">
@@ -240,10 +369,7 @@
 <div class="toctree-wrapper compound">
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="lightspeedpy.lc.html">lc API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="lightspeedpy.lc.html#lightspeedpy.lc.Lightcurve"><code class="docutils literal notranslate"><span class="pre">Lightcurve</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="lightspeedpy.lc.html#lightspeedpy.lc.Lightcurve.save"><code class="docutils literal notranslate"><span class="pre">Lightcurve.save()</span></code></a></li>
-</ul>
-</li>
+<li class="toctree-l2"><a class="reference internal" href="lightspeedpy.lc.html#lightspeedpy.lc.Lightcurve"><code class="docutils literal notranslate"><span class="pre">Lightcurve</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.lc.html#lightspeedpy.lc.get_clipped_lc"><code class="docutils literal notranslate"><span class="pre">get_clipped_lc()</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.lc.html#lightspeedpy.lc.get_summed_lc"><code class="docutils literal notranslate"><span class="pre">get_summed_lc()</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.lc.html#lightspeedpy.lc.get_weighted_lc_linearized"><code class="docutils literal notranslate"><span class="pre">get_weighted_lc_linearized()</span></code></a></li>
@@ -291,6 +417,7 @@
 <li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.DataSet"><code class="docutils literal notranslate"><span class="pre">DataSet</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.Ephemeris"><code class="docutils literal notranslate"><span class="pre">Ephemeris</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.Frame"><code class="docutils literal notranslate"><span class="pre">Frame</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.PixelProperties"><code class="docutils literal notranslate"><span class="pre">PixelProperties</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.Region"><code class="docutils literal notranslate"><span class="pre">Region</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.add_dataset_args"><code class="docutils literal notranslate"><span class="pre">add_dataset_args()</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="#lightspeedpy.get_dataset"><code class="docutils literal notranslate"><span class="pre">get_dataset()</span></code></a></li>

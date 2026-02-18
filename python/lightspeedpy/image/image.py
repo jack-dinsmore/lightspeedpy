@@ -8,6 +8,19 @@ FLAT_NAN_THRESHOLD = 0.1
 FORBIDDEN_KEYWORDS = "XTENSION BITPIX NAXIS NAXIS1 NAXIS2 NAXIS3 PCOUNT GCOUNT BSCALE BZERO EXTNAME".split()
 
 def get_clipped_image(data_set):
+    """
+    Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame, clipped to zero or 1.
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The proto-Lightspeed data set
+
+    Returns
+    -------
+    array-like
+        The image, crrected for flat TODO and quantum efficiency
+    """
     image = np.zeros(data_set.image_shape)
     duration = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
@@ -27,6 +40,19 @@ def get_clipped_image(data_set):
     return image
 
 def get_summed_image(data_set):
+    """
+    Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame.
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The proto-Lightspeed data set
+
+    Returns
+    -------
+    array-like
+        The image, crrected for flat TODO and quantum efficiency
+    """
     duration = np.zeros(data_set.image_shape)
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
@@ -82,6 +108,19 @@ def load_image(image, assert_items):
         return np.array(hdul[0].data)
     
 def get_weighted_image(data_set):
+    """
+    Get a bias, dark, flat corrected image from a :class:`DataSet` after weighting by the probability of each being real.
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The proto-Lightspeed data set
+
+    Returns
+    -------
+    array-like
+        The image, crrected for flat TODO and quantum efficiency
+    """
     # Get initial image
     image = get_summed_image(data_set)
     frame_duration = data_set.runs[0].header1["EXPOSURE TIME"]
@@ -160,6 +199,19 @@ def get_weighted_image(data_set):
     return image
 
 def get_weighted_image_linearized(data_set):
+    """
+    Get a bias, dark, flat corrected image from a :class:`DataSet` after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is << 1.
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The proto-Lightspeed data set
+
+    Returns
+    -------
+    array-like
+        The image, crrected for flat TODO and quantum efficiency
+    """
     numer = np.zeros(data_set.image_shape)
     denom = np.zeros(data_set.image_shape)
     pixel_properties = data_set.runs[0].get_pixel_properties() # TODO assumes these all have the same properties

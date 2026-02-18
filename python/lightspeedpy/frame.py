@@ -85,9 +85,14 @@ class DataSetIterator:
     
 class Frame:
     """
-    # Attributes
-    * image contains the frame image (float) in units of electrons. If darks, biases, and cr cuts were set, they are already subtracted
-    * timestamp contains the time in seconds after camera start
+    Attributes
+    ----------
+    image : array-like
+        Contains the frame image in units of electrons. If darks and biases were set, they are already subtracted. The flat was not included, nor the QE
+    timestamp : float
+        Time in seconds after camera start
+    duration : float
+        Frame time in seconds
     """
     def __init__(self, raw_image, timestamp, duration):
         self.image = raw_image.astype(float) / ADU_PER_ELECTRON

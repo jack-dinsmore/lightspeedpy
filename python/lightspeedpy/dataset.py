@@ -22,9 +22,6 @@ class DataSet:
     ----------
     filenames : list of str
         List of files to include
-    
-    Keyword Arguments
-    -----------------
     cut_cr : bool, optional
         Set to False to no longer cut CRs.
     """
@@ -38,8 +35,8 @@ class DataSet:
         with fits.open(self.filenames[0]) as hdul:
             self.header0 = hdul[0].header
             self.header1 = hdul[1].header
-            self.get_image_data(hdul)
-            self.apply_timing_offset(hdul) # Initialize the timing data
+            self._get_image_data(hdul)
+            self._get_timing_data(hdul)
             self.frames.append(hdul[1].shape[0] * self.frames_per_bundle)
 
         for filename in self.filenames[1:]:
@@ -68,7 +65,7 @@ class DataSet:
         max_index : int, optional
             Maximum cube index to use. Default: the highest that was downloaded
         
-        Keyword Arguments
+        Parameters
         -----------------
         See :class:`DataSet`
         """
@@ -142,6 +139,9 @@ class DataSet:
         return self.iterator().__iter__()
 
     def display_filenames(self):
+        """
+        Print all the filenames in the data set
+        """
         indices = [int(f[-8:-5]) for f in self.filenames] # TODO
 
         # Print all contiguous units
@@ -161,14 +161,29 @@ class DataSet:
                     print(self.filenames[j], f"({self.frames[j]}) frames")
 
     def bootstrap(self):
+        """
+        Resamples the file names for use in bootstrapping. If you want to estimate uncertainties, redo your analysis with many :meth:`DataSet.bootstrap`'ed data sets and calculate the standard deviation of your results.
+
+        Notes
+        -----
+        You should never bootstrap a data set twice. Instead, you should always create a copy of the original data set with copy.deepcopy and then bootstrap the copy.
+        """
         indices = np.random.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
         self.filenames = self.filenames[indices]
         self.frames = self.frames[indices]
 
     def num_frames(self):
+        """
+        Counts the number of frames in the data set
+
+        Returns
+        -------
+        int
+            The number of frames in the data set
+        """
         return np.sum(self.frames)
     
-    def get_image_data(self, hdul):
+    def _get_image_data(self, hdul):
         if hdul[1].header["HIERARCH FRAMEBUNDLE MODE"] == "OFF":
             self.frames_per_bundle = 1
         else:
@@ -176,8 +191,8 @@ class DataSet:
 
         self.image_shape = (hdul[1].data.shape[1]//self.frames_per_bundle, hdul[1].data.shape[2])
 
-    def apply_timing_offset(self, hdul, timing_offset=0):
-        # Get timing data for this fileset. Note: this function should only be called on the first cube. get_image_data has to be run first
+    def _get_timing_data(self, hdul):
+        # Get timing data for this fileset. Note: this function should only be called on the first cube. _get_image_data has to be run first
         self.seconds_per_frame = hdul[1].header["HIERARCH EXPOSURE TIME"]
         try:
             self.start_time = Time(hdul[0].header["GPSSTART"], format="isot")
@@ -187,9 +202,31 @@ class DataSet:
         self.start_time -= hdul[2].data["TIMESTAMP"][0] # start_time is now time that the last frame in the first bundle was read out. This line doesn't do anything since December, since the first timestamp is already subtracted.
         self.start_time += hdul[1].header["HIERARCH TIMING READOUT TIME"] / 2# start_time is now time that the frame before the first frame was halfway through readout
         self.start_time += hdul[1].header["HIERARCH EXPOSURE TIME"] / 2# start_time is offset by half the exposure
+
+    def apply_timing_offset(self, timing_offset=0):
+        """
+        Apply a timing offset to the data set. Now, a frame read at `timing_offset` will be treated as having time 0.
+
+        Parameters
+        ----------
+        timing_offset : float
+            Time offset, in seconds
+        """
         self.start_time -= timing_offset
 
     def stack(self, **kwargs):
+        """
+        Obtain the average image of the data cube.
+
+        Returns
+        -------
+        array-like
+            The average image of the cube, in electrons.
+
+        Notes
+        ------
+        Same keyword arguments as :class:`DataSet`. For keyword arguments you do not provide, the values you passed to the data set constructor will be used.
+        """
         frame_total = np.zeros(self.image_shape)
         n_frames = np.zeros(self.image_shape, int)
         for frame in self.iterator(kwargs):
@@ -198,10 +235,10 @@ class DataSet:
             n_frames[goodmask] += 1
         return frame_total / n_frames
 
-    def get_timestamps(self):
+    def _get_timestamps(self):
         timestamps = []
         for filename in self.filenames:
-            with fits.open(filename, memmap=True) as hdul:
+            with fits.open(filename) as hdul:
                 these_timestamps = []
                 for timestamp in hdul[2].data["TIMESTAMP"]:
                     for frame_index in range(self.frames_per_bundle):
@@ -211,11 +248,23 @@ class DataSet:
     
     @property
     def pixel_properties(self):
+        """
+        PixelProperties
+            Pixel properties of the data set
+        """
         if not hasattr(self, "_pixel_properties"):
             self._pixel_properties = PixelProperties.default()
         return self._pixel_properties
     
     def set_bias(self, bias_data_set):
+        """
+        Set the bias
+
+        Parameters
+        ----------
+        bias_data_set : DataSet
+            A :class:`DataSet` containing the bias observation
+        """
         if hasattr(self, "_pixel_properties"):
             raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
         if not hasattr(bias_data_set, "_pixel_properties"):
@@ -223,12 +272,31 @@ class DataSet:
         self._pixel_properties = copy.deepcopy(bias_data_set.pixel_properties)
 
     def self_bias(self):
+        """
+        Estimate an observation from these data. This can only be done accurately for very fast readout of a faint source, where most of the pixels detect zero photons.
+        """
         self._pixel_properties = PixelProperties.from_data(self, self)
 
     def set_dark(self, dark_data_set):
+        """
+        Set the dark
+
+        Parameters
+        ----------
+        dark_data_set : DataSet
+            A :class:`DataSet` containing the dark observation
+        """
         self.dark = dark_data_set.stack() / dark_data_set.seconds_per_frame
 
     def set_flat(self, flat_data_set):
+        """
+        Set the flat
+
+        Parameters
+        ----------
+        flat_data_set : DataSet
+            A :class:`DataSet` containing the flat observation
+        """
         self.flat = flat_data_set.stack()
         self.flat /= get_qe()(self.flat)
         self.flat /= np.nanmax(self.flat)

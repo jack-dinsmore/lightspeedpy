@@ -107,7 +107,20 @@ class EphemerisLibrary():
             f.write(str(datetime.datetime.now()))
 
 class Ephemeris():
-    def __init__(self, parfile, timestamps, observatory="LCO"):
+    """
+    Class to contain a PINT ephemeris and assign phases to lightspeed data. Ephemerides are saved in the lightspeedpy/tmp directory so that they don't have to be recomputed.
+
+    Parameters
+    ----------
+    parfile : str
+        File name of the PINT ephemeris file
+    data_set : DataSet
+        The data set to create timestamps for
+    observatory : str, optional
+        Observatory where Lightspeed was. Default: LCO
+    """
+    def __init__(self, parfile, data_set, observatory="LCO"):
+        timestamps = data_set._get_timestamps()
         pint.observatory.topo_obs.TopoObs(observatory, location=EarthLocation.of_site(observatory))
 
         self.model = model_builder.get_model(parfile)
@@ -141,5 +154,8 @@ class Ephemeris():
         self.interpolator = interp1d(self.timestamps, self.phases, bounds_error=False, fill_value="extrapolate") # Extrapolate. This will extrapolate the calculated phases throughout the last frame, which is out of bounds of the interpolator.
 
     def get_phase(self, time):
+        """
+        Returns the phase (0 to 1) corresponding to a specific time
+        """
         phase = self.interpolator(time)
         return phase - np.floor(phase)

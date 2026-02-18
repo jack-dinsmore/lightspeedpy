@@ -15,6 +15,22 @@ def delta_phase(phase_start, phase_end):
         return 1 - (phase_start - phase_end)
 
 class Lightcurve:
+    """
+    Class to store light curves and save them
+
+    Parameters
+    ----------
+    edges : array-like
+        Edges of the phase bins of the light curve
+    fluxes : array-like
+        Flux in each light curve bin. If edges has length N+1, fluxes should have length N
+    exposures : array-like
+        Time in seconds spent in each bin
+    duration : array-like
+        Duration of each frame, in seconds
+    eph : Ephemeris
+        Target ephemeris
+    """
     def __init__(self, edges, flux, exposures, duration, eph):
         self.edges = edges
         self.flux = flux
@@ -23,6 +39,16 @@ class Lightcurve:
         self.ephemeris = eph
 
     def save(self, data_set, args):
+        """
+        Save the light curve to a file
+        
+        Parameters
+        ----------
+        data_set : DataSet
+            The data set from which the light curve was extracted
+        args : argparse args
+            The arguments of the lc CLI call
+        """
         cols = [
             fits.Column(name='PHASEHI', array=self.edges[1:], format='E'),
             fits.Column(name='PHASELO', array=self.edges[:-1], format='E'),
@@ -82,6 +108,25 @@ def get_bin_weights(phase_edges, start_phase, end_phase):
     return weights
 
 def get_summed_lc(data_set, n_bins, reg_file, ephemeris):
+    """
+    Get the light curve of a source by summing all the detected photons per frame
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The data set of the observation
+    n_bins : int
+        Number of light curve bins to use
+    reg_file : str
+        The ciao-format, physical coordinate region file containing the source
+    ephemeris : Ephemeris
+        The source ephemeris
+    
+    Returns
+    -------
+    Lightcurve
+        The light curve object, corrected for quantum efficiency TODO
+    """
     # Does not use the image
     electrons = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
@@ -113,6 +158,25 @@ def get_summed_lc(data_set, n_bins, reg_file, ephemeris):
     return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
 
 def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
+    """
+    Get the light curve of a source by summing all the detected photons per frame, clipped to zero or 1
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The data set of the observation
+    n_bins : int
+        Number of light curve bins to use
+    reg_file : str
+        The ciao-format, physical coordinate region file containing the source
+    ephemeris : Ephemeris
+        The source ephemeris
+    
+    Returns
+    -------
+    Lightcurve
+        The light curve object, corrected for quantum efficiency TODO
+    """
     # Does not use the image
     electrons = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
@@ -144,6 +208,27 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
     return Lightcurve(phase_edges, fluxes, exposures, frame_duration, ephemeris)
 
 def get_weighted_lc(data_set, image, n_bins, reg_file, ephemeris):
+    """
+    Get the light curve of a source by summing all the detected photons per frame after weighting by the probability of each being real. This function can also do PSF-weighted photometry
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The data set of the observation
+    image : array-like or None
+        image of PSF weights to use. Set to None to not use PSF weights.
+    n_bins : int
+        Number of light curve bins to use
+    reg_file : str
+        The ciao-format, physical coordinate region file containing the source
+    ephemeris : Ephemeris
+        The source ephemeris
+    
+    Returns
+    -------
+    Lightcurve
+        The light curve object, corrected for quantum efficiency TODO
+    """
     # Set up lightcurve
     lightcurve = np.zeros(n_bins) # Multiplier to the image
     exposures = np.zeros(n_bins)
@@ -258,8 +343,28 @@ def get_weighted_lc(data_set, image, n_bins, reg_file, ephemeris):
 
     return Lightcurve(phase_edges, lightcurve, exposures, frame_duration, ephemeris)
 
-
 def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
+    """
+    Get the light curve of a source by summing all the detected photons per frame after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is << 1. This function can also do PSF-weighted photometry.
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The data set of the observation
+    image : array-like or None
+        image of PSF weights to use. Set to None to not use PSF weights.
+    n_bins : int
+        Number of light curve bins to use
+    reg_file : str
+        The ciao-format, physical coordinate region file containing the source
+    ephemeris : Ephemeris
+        The source ephemeris
+    
+    Returns
+    -------
+    Lightcurve
+        The light curve object, corrected for quantum efficiency TODO
+    """
     # Does not use the image
     roi = Region.load(reg_file)
     phase_edges = np.linspace(0, 1, n_bins+1)

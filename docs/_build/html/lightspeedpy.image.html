@@ -38,17 +38,53 @@
 <dl class="py function" id="module-lightspeedpy.image">
 <dt class="sig sig-object py" id="lightspeedpy.image.get_clipped_image">
 <span class="sig-prename descclassname"><span class="pre">lightspeedpy.image.</span></span><span class="sig-name descname"><span class="pre">get_clipped_image</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.image.get_clipped_image" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Get a bias, dark, flat corrected image from a <code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code> by summing all the detected photons per frame, clipped to zero or 1.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>data_set</strong> (<a class="reference internal" href="lightspeedpy.html#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – The proto-Lightspeed data set</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The image, crrected for flat TODO and quantum efficiency</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="lightspeedpy.image.get_summed_image">
 <span class="sig-prename descclassname"><span class="pre">lightspeedpy.image.</span></span><span class="sig-name descname"><span class="pre">get_summed_image</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.image.get_summed_image" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Get a bias, dark, flat corrected image from a <code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code> by summing all the detected photons per frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>data_set</strong> (<a class="reference internal" href="lightspeedpy.html#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – The proto-Lightspeed data set</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The image, crrected for flat TODO and quantum efficiency</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="lightspeedpy.image.get_weighted_image_linearized">
 <span class="sig-prename descclassname"><span class="pre">lightspeedpy.image.</span></span><span class="sig-name descname"><span class="pre">get_weighted_image_linearized</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data_set</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#lightspeedpy.image.get_weighted_image_linearized" title="Link to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Get a bias, dark, flat corrected image from a <code class="xref py py-class docutils literal notranslate"><span class="pre">DataSet</span></code> after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is &lt;&lt; 1.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>data_set</strong> (<a class="reference internal" href="lightspeedpy.html#lightspeedpy.DataSet" title="lightspeedpy.DataSet"><em>DataSet</em></a>) – The proto-Lightspeed data set</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The image, crrected for flat TODO and quantum efficiency</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
 
 </section>
 
@@ -76,6 +112,7 @@
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.DataSet"><code class="docutils literal notranslate"><span class="pre">DataSet</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.Ephemeris"><code class="docutils literal notranslate"><span class="pre">Ephemeris</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.Frame"><code class="docutils literal notranslate"><span class="pre">Frame</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.PixelProperties"><code class="docutils literal notranslate"><span class="pre">PixelProperties</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.Region"><code class="docutils literal notranslate"><span class="pre">Region</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.add_dataset_args"><code class="docutils literal notranslate"><span class="pre">add_dataset_args()</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="lightspeedpy.html#lightspeedpy.get_dataset"><code class="docutils literal notranslate"><span class="pre">get_dataset()</span></code></a></li>

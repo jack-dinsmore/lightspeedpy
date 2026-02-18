@@ -35,11 +35,24 @@ def make_m1m2_grid():
 GRID_INTERPOLATOR = make_m1m2_grid()
 
 class PixelProperties:
+    """
+    Biases and noise of each pixel in the data set. Use :meth:`PixelProperties.from_data` or :meth:`PixelProperties.from_bias` to create it.
+    
+    Attributes
+    ----------
+    bias : array-like
+        Image of biases of each pixel
+    widths : array-like
+        Noises in each pixel, defined as the standard deviation of the Gaussian error approximation.
+    """
     def __init__(self, bias, widths, source_data_set, dest_data_set):
         self.bias = trim_image(bias, source_data_set, dest_data_set)
         self.widths = trim_image(widths, source_data_set, dest_data_set)
 
     def _get_moments(data_set):
+        """
+        Return images of the first and second moments of the data set
+        """
         m1_image = np.zeros(data_set.image_shape)
         m2_image = np.zeros(data_set.image_shape)
         n_frames = np.zeros(data_set.image_shape)
@@ -56,6 +69,9 @@ class PixelProperties:
         return m1_image, m2_image
 
     def default(data_set):
+        """
+        Get the default pixel properties for a data set with no bias and not self-biased.
+        """
         return PixelProperties(
             np.zeros(data_set.image_shape) * 199.5 / ADU_PER_ELECTRON,
             np.zeros(data_set.image_shape) * 0.3,
@@ -64,6 +80,9 @@ class PixelProperties:
         )
 
     def from_data(source_data_set, dest_data_set):
+        """
+        Get the pixel properties of a faint, rapid readout data set
+        """
         m1_image, m2_image = PixelProperties._get_moments(source_data_set)
         output = GRID_INTERPOLATOR((m1_image, m2_image))
         bias = output[:,:,0]
@@ -74,6 +93,9 @@ class PixelProperties:
         return PixelProperties(bias, widths, source_data_set, dest_data_set)
 
     def from_bias(source_data_set, dest_data_set):
+        """
+        Get the pixel properties of a bias data set
+        """
         m1_image, m2_image = PixelProperties._get_moments(source_data_set)
 
         bias = m1_image

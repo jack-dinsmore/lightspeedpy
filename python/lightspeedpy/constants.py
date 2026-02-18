@@ -1,0 +1,1 @@
+ADU_PER_ELECTRON = 8.9

@@ -1,8 +1,8 @@
 import numpy as np
 from astropy.io import fits
 from scipy.special import factorial
-from .regions import Region
-from .ephemeris import Ephemeris
+from ..regions import Region
+from ..ephemeris import Ephemeris
 
 MAX_N_SCALE = 2
 SMEAR_FRAME = False # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.

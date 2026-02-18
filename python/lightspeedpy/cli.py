@@ -1,12 +1,16 @@
 # This is where all the functions that take "args" as an argument go
 import os, argparse
 from .dataset import DataSet
-from .image import *
-from .lc import *
-from .ephemeris import Ephemeris
-from .pulse_search import get_linear_fft
 
 def get_dataset(args):
+    """
+    Get the :class:`DataSet` from an `argparse` parser, assuming the arguments correspond to those created by :func:`cli.add_dataset_args`.
+
+    Parameters
+    ----------
+    args : argparse args
+        Command line arguments
+    """
     if os.path.exists(args.output) and not args.clobber:
         raise Exception(f"Cannot save to {args.output}: file already exists and clobber is False")
     
@@ -37,48 +41,15 @@ def get_dataset(args):
         print("WARNING: No flat provided")
     return data_set
 
-def get_image(args):
-    data_set = get_dataset(args)
-
-    if args.mode == "sum":
-        image = get_summed_image(data_set)
-    elif args.mode == "clip":
-        image = get_clipped_image(data_set)
-    elif args.mode == "weight":
-        image = get_weighted_image(data_set)
-    else:
-        raise Exception("Not reachable")
-
-    save_image(image, data_set, args)
-
-def get_lc(args):
-    data_set = get_dataset(args)
-
-    # data_set.bootstrap()
-
-    ephemeris = Ephemeris(args.eph, data_set.get_timestamps())
-
-    if args.mode == "sum":
-        lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
-    elif args.mode == "clip":
-        lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
-    elif args.mode == "weight":
-        if args.image is None:
-            image = None
-        else:
-            image = load_image(args.image, assert_items=dict(flat=None))
-        lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
-
-    lc.save(data_set, args)
-
-def get_fft(args):
-    data_set = get_dataset(args)
-
-    fft = get_linear_fft(data_set, args)
-
-    fft.save(data_set, args)
-
 def add_dataset_args(parser):
+    """
+    Add the standard lightspeedpy arguments to an `argparse` parser. These include input, output, bias, self-bias, dark, flat, frames, timing-offset, and clobber.
+
+    Parameters
+    ----------
+    parser : argparse parser
+        Parser to which to add arguments
+    """
     parser.add_argument("--input", nargs='+', required=True, help="File name of dataset")
     parser.add_argument("--output", required=True, help="File name of output image")
     parser.add_argument("--bias", nargs='+', help="File name of bias")

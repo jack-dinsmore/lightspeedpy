@@ -1,145 +1,173 @@
 import numpy as np
-import os, tqdm
+import os, copy
 from astropy.io import fits
 from astropy.time import Time
-from astropy.coordinates import SkyCoord, EarthLocation
-import astropy.units as u
+from .frame import DataSetIteratorRet
 from .pixel_properties import PixelProperties
 from .qe import get_qe
 
 DEFAULT_TIME = "2025-09-13 06:00:00.00429"
-ADU_PER_ELECTRON = 8.9
-DEFAULT_BIAS = 199.5
 
 class DataSet:
-    def __init__(self, runs, frames=None):
-        if len(runs) == 0:
+    """
+    Contains metadata relating to one contiguous LightSpeed observation. The data set is never loaded into memory, so many-GB observations can be treated.
+
+    There are three ways to initialize a :class:`DataSet`:
+     
+    1. Use :meth:`DataSet.from_first` to create a data set of all files in the capture
+    2. Use :meth:`DataSet.from_dir` to create a data set out of all the files in a directory
+    3. Use the constructor and pass all the files you want to be in the data set as a parameter.
+
+    Parameters
+    ----------
+    filenames : list of str
+        List of files to include
+    
+    Keyword Arguments
+    -----------------
+    cut_cr : bool, optional
+        Set to False to no longer cut CRs.
+    """
+    def __init__(self, filenames, **kwargs):
+        if len(filenames) == 0:
             raise Exception("You must provide at least one filename")
-        self.runs = runs
-        self.image_shape = runs[0].image_shape
-        self.header0 = runs[0].header0
-        self.header1 = runs[0].header1
-        self.flat = self.runs[0].flat
-        self.frames = frames
-        for run in runs:
-            if run.image_shape != self.image_shape:
-                raise Exception("You cannot form one data set out of runs with different subarrays")
+        
+        # Check the headers to make sure they are all the same
+        self.filenames = np.sort(filenames)
+        self.frames = []
+        with fits.open(self.filenames[0]) as hdul:
+            self.header0 = hdul[0].header
+            self.header1 = hdul[1].header
+            self.get_image_data(hdul)
+            self.apply_timing_offset(hdul) # Initialize the timing data
+            self.frames.append(hdul[1].shape[0] * self.frames_per_bundle)
 
-    def from_files(filenames, cr_cut=True, auto_bias=True, timing_offset=0, frames=None):
-        runs = [SingleRun(filename, cr_cut, auto_bias, timing_offset) for filename in filenames]
-        return DataSet(runs, frames)
+        for filename in self.filenames[1:]:
+            with fits.open(filename) as hdul:
+                self.frames.append(len(hdul[1].data))
+                if str(self.header0) != str(hdul[0].header) or str(self.header1) != str(hdul[1].header):
+                    raise Exception(f"File {filename} had a different header. Lightspeedpy does not currently support this.")
+        self.frames = np.array(self.frames)
+                
+        self.dark = None
+        self.flat = None
+        self.noises = None
+        self.iter_kwargs = kwargs
+        self.auto_bias = False
 
-    def iterator(self, use_bar=True, max_frames=None):
-        return DataSetIteratorRet(self, use_bar, max_frames)
-
-    def display_filenames(self):
-        for run in self.runs:
-            run.display_filenames()
-
-    def bootstrap(self):
-        print("BOOTSTRAP")
-        for run in self.runs:
-            run.filenames = np.random.choice(run.filenames, len(run.filenames), replace=True)
-        self.display_filenames()
-
-    def __iter__(self):
-        return self.iterator().__iter__()
-    
-    def __iadd__(self, data_set):
-        # TODO check for compatibility between header0 and header1 (in particular, the subarray selection. I don't believe I need to require the exposure to be the same.)
-        if self.image_shape != data_set.image_shape:
-            raise Exception("You cannot form one data set out of runs with different subarrays")
-        for r in data_set.runs:
-            self.runs.append(r)
-
-    def num_frames(self):
-        n_frames = 0
-        if self.frames is None:
-            for run in self.runs:
-                n_frames += run.num_frames()
-        else:
-            if len(self.frames) == 1:
-                n_frames = 1
-            else:
-                n_frames = self.frames[1] - self.frames[0]
-        return n_frames
-
-    def get_timestamps(self):
-        timestamps = []
-        for run in self.runs:
-            timestamps = np.concatenate([timestamps, run.get_timestamps()])
-        return timestamps
-    
-    def set_bias(self, bias):
-        for run in self.runs:
-            run.set_bias(bias)
-
-    def set_self_bias(self):
-        for run in self.runs:
-            run.set_self_bias()
-
-    def set_dark(self, dark):
-        for run in self.runs:
-            run.set_dark(dark)
-
-    def set_flat(self, flat):
-        for run in self.runs:
-            run.set_flat(flat)
-        self.flat = self.runs[0].flat # TODO this is a stopgap to divide by flat
-    
-class DataSetIteratorRet:
-    def __init__(self, *args):
-        self.args = args
-
-    def __iter__(self):
-        return DataSetIterator(*self.args)
-
-
-class SingleRun:
-    def __init__(self, filename, cr_cut, auto_bias, timing_offset):
+    def from_first(filename, min_index=None, max_index=None, **kwargs):
         """
-        Create a new data set
-        # Arguments
-        - filename: name of the first cube in the data set
-        - cr_cut: set to True to automatically remove cosmic rays
-        - auto_bias: set to True to subtract 199.5 ADC counts from the image as a very rough bias when not using a bias frame. If you are using a bias frame, this flag has no effect.
-        - timing offset: set to offset the TIMESTAMPs by a given number [seconds]
+        Create a :class:`DataSet` for all files in a capture
+        
+        Parameters
+        ----------
+        filename : str
+            name of a file in the capture
+        min_index : int, optional
+            Minimum cube index to use. Default: the lowest that was downloaded
+        max_index : int, optional
+            Maximum cube index to use. Default: the highest that was downloaded
+        
+        Keyword Arguments
+        -----------------
+        See :class:`DataSet`
         """
         directory = os.path.dirname(filename)
         filename = os.path.basename(filename)
         prefix = filename[:-8]
 
-        self.filenames = []
+        filenames = []
         for f in os.listdir(directory):
             if not f.startswith(prefix): continue
-            self.filenames.append(f"{directory}/{f}")
-        if len(self.filenames) == 0:
+            print(f[-8:-5])
+            index = int(f[-8:-5])
+            if min_index is not None and index < min_index: continue
+            if max_index is not None and index > max_index: continue
+            filenames.append(f"{directory}/{f}")
+        if len(filenames) == 0:
             raise Exception(f"The filename {filename} does not exist")
-        self.filenames = np.sort(self.filenames)
 
-        with fits.open(self.filenames[0]) as hdul:
-            self.header0 = hdul[0].header
-            self.header1 = hdul[1].header
-            self.get_image_data(hdul)
-            self.get_timing_data(hdul, timing_offset)
+        return DataSet(filenames, **kwargs)
+    
+    def from_dir(directory, **kwargs):
+        """
+        Create a :class:`DataSet` for all files in a directory
+        
+        Parameters
+        ----------
+        directory : str
+            name of the directory
+        
+        Keyword Arguments
+        -----------------
+        See :class:`DataSet`
+        """
+        if not os.path.exists(directory):
+            raise Exception(f"The directory {directory} does not exist")
+        
+        filenames = []
+        for f in os.listdir(directory):
+            if not f.endswith(".fits"): continue
+            filenames.append(f"{directory}/{f}")
 
-        self.bias = None
-        self.bias_data_set = None
-        self.dark = None
-        self.flat = None
-        self.pixel_properties=None
-        self.cr_cut = cr_cut
-        self.auto_bias = auto_bias
+        if len(filenames) == 0:
+            raise Exception(f"The directory contained no FITS files")
+        
+        return DataSet(filenames, **kwargs)
+    
+    def iterator(self, **kwargs):
+        """
+        Create an iterator for iterating through all frames in a :class:`DataSet`. 
+
+        Keyword Arguments
+        -----------------
+        The default keyword arguments are the ones you passed when you created the :class:`DataSet`.       
+        You can override the defaults by passing new arguments here. You can also pass the following
+
+        max_frames : int, optional
+            Maximum number of frames to iterate through. Default: all the frames
+        use_bar : bool, optional
+            Show a progress bar. Default: True.
+
+        Notes
+        -----
+        ``for frame in data_set.iterator()`` is equivalent to ``for frame in data_set``.
+        """
+        use_kwargs = {} if self.iter_kwargs is None else copy.copy(self.iter_kwargs)
+        for k, v in kwargs.items():
+            use_kwargs[k] = v
+        return DataSetIteratorRet(self, **use_kwargs)
+
+    def __iter__(self):
+        return self.iterator().__iter__()
 
     def display_filenames(self):
-        if len(self.filenames) <= 3:
-            for filename in self.filenames:
-                print(filename)
-        else:
-            print(self.filenames[0])
-            print("...")
-            print(self.filenames[-1])
+        indices = [int(f[-8:-5]) for f in self.filenames] # TODO
 
+        # Print all contiguous units
+        breaks = [0]
+        for i in range(1, len(indices)):
+            if indices[i] != indices[i-1]+1:
+                breaks.append(i)
+        for i in range(len(breaks)-1):
+            start = breaks[i]
+            stop = breaks[i+1]-1
+            if stop - start > 2:
+                print(self.filenames[start], f"({self.frames[start]}) frames")
+                print("...")
+                print(self.filenames[stop], f"({self.frames[stop]}) frames")
+            else:
+                for j in range(start, stop+1):
+                    print(self.filenames[j], f"({self.frames[j]}) frames")
+
+    def bootstrap(self):
+        indices = np.random.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
+        self.filenames = self.filenames[indices]
+        self.frames = self.frames[indices]
+
+    def num_frames(self):
+        return np.sum(self.frames)
+    
     def get_image_data(self, hdul):
         if hdul[1].header["HIERARCH FRAMEBUNDLE MODE"] == "OFF":
             self.frames_per_bundle = 1
@@ -148,16 +176,9 @@ class SingleRun:
 
         self.image_shape = (hdul[1].data.shape[1]//self.frames_per_bundle, hdul[1].data.shape[2])
 
-    def num_frames(self):
-        n_frames = 0
-        for filename in self.filenames:
-            with fits.open(filename) as hdul:
-                n_frames += hdul[1].shape[0] * self.frames_per_bundle
-        return n_frames
-
-    def get_timing_data(self, hdul, timing_offset=0):
+    def apply_timing_offset(self, hdul, timing_offset=0):
         # Get timing data for this fileset. Note: this function should only be called on the first cube. get_image_data has to be run first
-        self.time_per_frame = hdul[1].header["HIERARCH EXPOSURE TIME"]
+        self.seconds_per_frame = hdul[1].header["HIERARCH EXPOSURE TIME"]
         try:
             self.start_time = Time(hdul[0].header["GPSSTART"], format="isot")
         except:
@@ -168,6 +189,15 @@ class SingleRun:
         self.start_time += hdul[1].header["HIERARCH EXPOSURE TIME"] / 2# start_time is offset by half the exposure
         self.start_time -= timing_offset
 
+    def stack(self, **kwargs):
+        frame_total = np.zeros(self.image_shape)
+        n_frames = np.zeros(self.image_shape, int)
+        for frame in self.iterator(kwargs):
+            goodmask = np.isfinite(frame)
+            frame_total[goodmask] += frame.image[goodmask]
+            n_frames[goodmask] += 1
+        return frame_total / n_frames
+
     def get_timestamps(self):
         timestamps = []
         for filename in self.filenames:
@@ -175,197 +205,30 @@ class SingleRun:
                 these_timestamps = []
                 for timestamp in hdul[2].data["TIMESTAMP"]:
                     for frame_index in range(self.frames_per_bundle):
-                        these_timestamps.append(np.float64(timestamp) + frame_index*self.time_per_frame + self.start_time)
+                        these_timestamps.append(np.float64(timestamp) + frame_index*self.seconds_per_frame + self.start_time)
             timestamps = np.concatenate([timestamps, these_timestamps])
         return timestamps
+    
+    @property
+    def pixel_properties(self):
+        if not hasattr(self, "_pixel_properties"):
+            self._pixel_properties = PixelProperties.default()
+        return self._pixel_properties
+    
+    def set_bias(self, bias_data_set):
+        if hasattr(self, "_pixel_properties"):
+            raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
+        if not hasattr(bias_data_set, "_pixel_properties"):
+            bias_data_set._pixel_properties = PixelProperties.from_bias(bias_data_set, self)
+        self._pixel_properties = copy.deepcopy(bias_data_set.pixel_properties)
 
-    def get_pixel_properties(self):
-        if self.pixel_properties is None:
-            if self.bias_data_set is None:
-                self.pixel_properties = PixelProperties(DataSet([self]), False)
-            else:
-                my_vpos = int(self.header1["HIERARCH SUBARRAY VPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-                my_hpos = int(self.header1["HIERARCH SUBARRAY HPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-                bias_vpos = int(self.bias_data_set.header1["HIERARCH SUBARRAY VPOS"]) if self.bias_data_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-                bias_hpos = int(self.bias_data_set.header1["HIERARCH SUBARRAY HPOS"]) if self.bias_data_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-                start_x = my_vpos - bias_vpos
-                start_y = my_hpos - bias_hpos
-                print(start_x, start_y, self.image_shape)
+    def self_bias(self):
+        self._pixel_properties = PixelProperties.from_data(self, self)
 
-                self.pixel_properties = PixelProperties(self.bias_data_set, True, window=(start_x, start_x+self.image_shape[0], start_y, start_y+self.image_shape[1]))
+    def set_dark(self, dark_data_set):
+        self.dark = dark_data_set.stack() / dark_data_set.seconds_per_frame
 
-                self.pixel_properties.bias *= 0 # Turn off the bias when using the bias data set to determine pixel properties, as the bias has already been subtracted.
-
-        return self.pixel_properties
-
-    def set_bias(self, bias):
-        if self.pixel_properties is not None:
-            raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You cannot do this because get_pixel_properties needs a good bias to function.")
-        
-        bias_set = DataSet.from_files(bias, cr_cut=False, auto_bias=False)
-        self.bias_data_set = bias_set
-
-        frame_total = np.zeros(bias_set.image_shape)
-        n_frames = 0
-        for frame in bias_set.iterator(max_frames=10_000):
-            frame_total += frame.image
-            n_frames += 1
-        bias_image = frame_total / n_frames
-
-        # Trim down the bias image to be the correct size
-        my_vpos = int(self.header1["HIERARCH SUBARRAY VPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-        my_hpos = int(self.header1["HIERARCH SUBARRAY HPOS"]) if self.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-        bias_vpos = int(bias_set.header1["HIERARCH SUBARRAY VPOS"]) if bias_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-        bias_hpos = int(bias_set.header1["HIERARCH SUBARRAY HPOS"]) if bias_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
-        start_x = my_vpos - bias_vpos
-        start_y = my_hpos - bias_hpos
-        self.bias = bias_image[start_x:start_x+self.image_shape[0], start_y:start_y+self.image_shape[1]]
-
-    def set_self_bias(self):
-        if self.bias_data_set is None:
-            self.bias = self.get_pixel_properties().bias + DEFAULT_BIAS / ADU_PER_ELECTRON
-            self.pixel_properties = None
-            self.get_pixel_properties()
-
-        else:
-            self.bias += self.get_pixel_properties().bias
-            self.pixel_properties = None
-            self.get_pixel_properties()
-
-    def set_dark(self, dark):
-        data_set = DataSet.from_files(dark)
-        data_set.bias = self.bias
-        frame_total = np.zeros(data_set.image_shape)
-        n_frames = np.zeros(data_set.image_shape, int)
-        for frame in data_set:
-            good_mask = ~np.isnan(frame.image)
-            frame_total[good_mask] += frame.image[good_mask]
-            n_frames[good_mask] +=1
-        self.dark = frame_total / n_frames # The dark is now electrons per frame
-
-    def set_flat(self, flat):
-        data_set = DataSet.from_files(flat)
-        data_set.bias = self.bias
-        data_set.dark = self.dark
-        frame_total = np.zeros(data_set.image_shape)
-        n_frames = np.zeros(data_set.image_shape, int)
-        for frame in data_set:
-            good_mask = ~np.isnan(frame.image)
-            frame_total[good_mask] += frame.image[good_mask]
-            n_frames[good_mask] +=1
-        self.flat = frame_total / n_frames
+    def set_flat(self, flat_data_set):
+        self.flat = flat_data_set.stack()
         self.flat /= get_qe()(self.flat)
         self.flat /= np.nanmax(self.flat)
-
-class DataSetIterator:
-    def __init__(self, data_set, use_bar, max_frames):
-        self.data_set = data_set
-        self.open_file = None
-        self.run_index = 0
-        self.file_index = 0
-        self.first_run = True
-        self.total_frame_index = 0
-        self.max_frames = max_frames
-
-        self.renew_file()
-        n_frames = data_set.num_frames()
-
-        if use_bar:
-            if max_frames is not None and max_frames < n_frames:
-                self.bar = tqdm.tqdm(total=max_frames, colour="green")
-            else:
-                self.bar = tqdm.tqdm(total=n_frames)
-        else:
-            self.bar = None
-
-    def renew_file(self):
-        if self.open_file is not None:
-            self.open_file.close()
-        self.open_file = fits.open(self.data_set.runs[self.run_index].filenames[self.file_index])
-        self.bundle_index = 0
-        self.frame_index = 0
-        self.n_bundles = self.open_file[1].data.shape[0]
-
-    def stop(self):
-        self.open_file.close()
-        self.bar.close()
-        raise StopIteration
-
-    def __next__(self):
-        self.total_frame_index += 1
-        if self.max_frames is not None and self.total_frame_index > self.max_frames:
-            self.stop()
-        
-        if not self.first_run:
-            # Increment the counters
-            self.frame_index += 1
-            if self.frame_index >= self.data_set.runs[self.run_index].frames_per_bundle:
-                self.frame_index = 0
-                self.bundle_index += 1
-            if self.bundle_index >= self.n_bundles:
-                self.bundle_index = 0
-                self.file_index += 1
-                if self.file_index >= len(self.data_set.runs[self.run_index].filenames):
-                    self.file_index = 0
-                    self.run_index += 1
-                    if self.run_index >= len(self.data_set.runs):
-                        self.stop()
-                self.renew_file()
-        self.first_run = False
-
-        if self.data_set.frames is not None:
-            if len(self.data_set.frames) == 1:
-                if self.total_frame_index-1 != self.data_set.frames[0]: self.__next__()
-            else:
-                if self.total_frame_index-1 < self.data_set.frames[0] or self.total_frame_index-1 >= self.data_set.frames[1]: self.__next__()
-
-        # Get the frame
-        start_pixel = self.data_set.runs[self.run_index].image_shape[0] * self.frame_index
-        raw_image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.runs[self.run_index].image_shape[0]), :]
-        timestamp = np.float64(self.open_file[2].data["TIMESTAMP"][self.bundle_index])
-        timestamp += self.data_set.runs[self.run_index].time_per_frame * self.frame_index
-        timestamp += self.data_set.runs[self.run_index].start_time
-
-        if self.bar is not None:
-            self.bar.update(1)
-
-        return Frame(raw_image, timestamp, self.data_set.runs[self.run_index])
-    
-class Frame:
-    """
-    # Attributes
-    * image contains the frame image (float) in units of electrons. If darks, biases, and cr cuts were set, they are already subtracted
-    * timestamp contains the time in seconds after camera start
-    """
-    def __init__(self, raw_image, timestamp, data_set):
-        self.image = raw_image.astype(float) / ADU_PER_ELECTRON
-        self.duration = data_set.time_per_frame
-        self.timestamp = timestamp # Seconds
-
-
-        if data_set.bias is not None:
-            self.image -= data_set.bias
-        elif data_set.auto_bias:
-            self.image -= DEFAULT_BIAS / ADU_PER_ELECTRON
-
-        if data_set.dark is not None:
-            self.image -= data_set.dark
-
-        if data_set.cr_cut:
-            cosmic_ray_filter(self.image)
-
-def cosmic_ray_filter(image):
-    # Compute laplacian
-    step=1 # Pixels
-    img = np.pad(image, step, mode='constant')
-    laplacian = (
-        img[step:-step, 2*step:] +
-        img[2*step:, step:-step] +
-        img[:-2*step, step:-step] +
-        img[step:-step, :-2*step] -
-        4 * img[step:-step, step:-step]
-    )/step**2
-    cr_sensor = -laplacian/image
-
-    # Mask CRs TODO is this working well for pulsars? I made it for LH
-    image[(cr_sensor > 2) & (image > 3)] = np.nan

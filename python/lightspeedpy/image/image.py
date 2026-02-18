@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.special import factorial
 from astropy.io import fits
-from .qe import get_qe
+from ..qe import get_qe
 
 WEIGHTED_FLAT_P = 0.1
 FLAT_NAN_THRESHOLD = 0.1

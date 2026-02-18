@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.interpolate import LinearNDInterpolator
 import os
+from .util import trim_image
+from .constants import ADU_PER_ELECTRON
 
 GRID_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "moments.npy"))
 
@@ -33,7 +35,11 @@ def make_m1m2_grid():
 GRID_INTERPOLATOR = make_m1m2_grid()
 
 class PixelProperties:
-    def __init__(self, data_set, is_bias, window=None):
+    def __init__(self, bias, widths, source_data_set, dest_data_set):
+        self.bias = trim_image(bias, source_data_set, dest_data_set)
+        self.widths = trim_image(widths, source_data_set, dest_data_set)
+
+    def _get_moments(data_set):
         m1_image = np.zeros(data_set.image_shape)
         m2_image = np.zeros(data_set.image_shape)
         n_frames = np.zeros(data_set.image_shape)
@@ -47,17 +53,30 @@ class PixelProperties:
 
         m1_image /= n_frames
         m2_image /= n_frames
+        return m1_image, m2_image
 
-        if is_bias:
-            self.bias = m1_image
-            self.widths = np.sqrt(m2_image - m1_image**2)
-        else:
-            output = GRID_INTERPOLATOR((m1_image, m2_image))
-            self.bias = output[:,:,0]
-            self.widths = output[:,:,1]
+    def default(data_set):
+        return PixelProperties(
+            np.zeros(data_set.image_shape) * 199.5 / ADU_PER_ELECTRON,
+            np.zeros(data_set.image_shape) * 0.3,
+            data_set,
+            data_set
+        )
 
-        self.widths = np.sqrt(m2_image - m1_image**2)# TODO
+    def from_data(source_data_set, dest_data_set):
+        m1_image, m2_image = PixelProperties._get_moments(source_data_set)
+        output = GRID_INTERPOLATOR((m1_image, m2_image))
+        bias = output[:,:,0]
+        widths = output[:,:,1]
 
-        if window is not None:
-            self.bias = self.bias[window[0]:window[1], window[2]:window[3]]
-            self.widths = self.widths[window[0]:window[1], window[2]:window[3]]
+        widths = np.sqrt(m2_image - m1_image**2) # TODO
+
+        return PixelProperties(bias, widths, source_data_set, dest_data_set)
+
+    def from_bias(source_data_set, dest_data_set):
+        m1_image, m2_image = PixelProperties._get_moments(source_data_set)
+
+        bias = m1_image
+        widths = np.sqrt(m2_image - m1_image**2)
+
+        return PixelProperties(bias, widths, source_data_set, dest_data_set)

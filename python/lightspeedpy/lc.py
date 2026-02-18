@@ -31,7 +31,7 @@ class Lightcurve:
         ]
         hdu = fits.BinTableHDU.from_columns(cols)
 
-        hdu.header["EXPOSURE"] = np.sum(self.exposures)
+        hdu.header["EXPTIME"] = np.sum(self.exposures)
         hdu.header["DURATION"] = self.duration
         hdu.header["NU"] = self.ephemeris.nu
 
@@ -39,15 +39,17 @@ class Lightcurve:
             if key == "func": continue
             if type(value) is list:
                 for i, item in enumerate(value):
+                    key = f"{key}{i}"
+                    if len(key) > 8: key = f"HIERARCH {key}"
                     hdu.header[f"{key}{i}"] = item
             else:
+                if len(key) > 8: key = f"HIERARCH {key}"
                 hdu.header[key] = value
         if "GPSSTART" in data_set.header0:
             hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
         for key, value in data_set.header1.items():
             if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
-                if len(key) > 8:
-                    key = key[-8:]
+                if len(key) > 8: key = f"HIERARCH {key}"
                 hdu.header[key] = value
 
         # Write to file, table in HDU 1

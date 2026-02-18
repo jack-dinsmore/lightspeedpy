@@ -19,8 +19,7 @@ class Fft:
             fits.Column(name='POWER', array=self.powers, format='E'),
         ]
         hdu = fits.BinTableHDU.from_columns(cols)
-
-        hdu.header["EXPOSURE"] = self.exposure
+        hdu.header["EXPTIME"] = self.exposure
 
         for key, value in vars(args).items():
             if key == "func": continue

@@ -10,7 +10,12 @@ def get_dataset(args):
     if os.path.exists(args.output) and not args.clobber:
         raise Exception(f"Cannot save to {args.output}: file already exists and clobber is False")
     
-    data_set = DataSet.from_files(args.input, timing_offset=args.timing_offset)
+    frames = None
+    if args.frames is not None:
+        if len(args.input) > 1:
+            raise Exception("You cannot provide the frames argument if using more than one run.")
+        frames = [int(f) for f in args.frames]
+    data_set = DataSet.from_files(args.input, timing_offset=args.timing_offset, frames=frames)
 
     print("Loaded files")
     data_set.display_filenames()
@@ -40,7 +45,7 @@ def get_image(args):
     elif args.mode == "clip":
         image = get_clipped_image(data_set)
     elif args.mode == "weight":
-        image = get_weighted_image_linearized(data_set)
+        image = get_weighted_image(data_set)
     else:
         raise Exception("Not reachable")
 
@@ -48,6 +53,9 @@ def get_image(args):
 
 def get_lc(args):
     data_set = get_dataset(args)
+
+    # data_set.bootstrap()
+
     ephemeris = Ephemeris(args.eph, data_set.get_timestamps())
 
     if args.mode == "sum":
@@ -77,5 +85,6 @@ def add_dataset_args(parser):
     parser.add_argument("--self-bias", help="Measure bias from self", action=argparse.BooleanOptionalAction)
     parser.add_argument("--dark", nargs='+', help="File name of dark")
     parser.add_argument("--flat", nargs='+', help="File name of flat")
+    parser.add_argument("--frames", nargs='+', help="Frame range to use. Zero indexed, inclusive on the start of the range and exclusive on the end, like python. If you wish to use only one frame, provide only one index. Default: use all frames.")
     parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)

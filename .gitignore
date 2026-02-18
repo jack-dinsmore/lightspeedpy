@@ -1,7 +1,9 @@
 Cargo.lock
 target/
-data/
+data/moments.npy
 __pycache__/
+tmp/
+
 *.so
 *.egg-info
 .DS_Store

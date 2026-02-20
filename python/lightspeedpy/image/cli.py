@@ -13,4 +13,6 @@ def get_image(args):
     else:
         raise Exception("Not reachable")
 
-    save_image(image, data_set, args)
+    save_kwargs = vars(args)
+    if "func" in save_kwargs: del save_kwargs["func"]
+    image.save(args.output, args.wcs, args.clobber, save_kwargs)

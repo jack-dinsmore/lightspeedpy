@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.interpolate import LinearNDInterpolator
 import os
+from astropy.io import fits
 from .util import trim_image
-from .constants import ADU_PER_ELECTRON
+from .constants import ADU_PER_ELECTRON, FORBIDDEN_KEYWORDS
 
 GRID_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "moments.npy"))
 
@@ -46,8 +47,53 @@ class PixelProperties:
         Noises in each pixel, defined as the standard deviation of the Gaussian error approximation.
     """
     def __init__(self, bias, widths, source_data_set, dest_data_set):
-        self.bias = trim_image(bias, source_data_set, dest_data_set)
-        self.widths = trim_image(widths, source_data_set, dest_data_set)
+        if bias is not None: # Cheat code so that I can construct an empty PixelProperties: set bias=None
+            self.bias = trim_image(bias, source_data_set, dest_data_set)
+            self.widths = trim_image(widths, source_data_set, dest_data_set)
+            self.header0 = source_data_set.header0
+            self.header1 = source_data_set.header1
+
+    def save(self, filename, clobber):
+        """
+        Save the pixel properties to a file
+
+        Parameters
+        ----------
+        filename : str
+            Name of the output file
+        """
+        h0 = fits.PrimaryHDU()
+        h1 = fits.ImageHDU(data=self.bias)
+        h2 = fits.ImageHDU(data=self.widths)
+
+        for key, value in self.header0.items():
+            if key not in FORBIDDEN_KEYWORDS:
+                if len(key) > 8: key = f"HIERARCH {key}"
+                h0.header[key] = value
+
+        for key, value in self.header1.items():
+            if key not in FORBIDDEN_KEYWORDS:
+                if len(key) > 8: key = f"HIERARCH {key}"
+                h1.header[key] = value
+                h2.header[key] = value
+
+        h0.header["PIXPROP"] = "T"
+        h1.header["PIXPROP"] = "T"
+        h2.header["PIXPROP"] = "T"
+
+        fits.HDUList([h0, h1, h2]).writeto(filename, overwrite=clobber)
+
+    def load(filename):
+        with fits.open(filename) as hdul:
+            if "PIXPROP" not in hdul[1].header or hdul[1].header["PIXPROP"] != "T":
+                raise Exception(f"The file {filename} is not a PixelProperties object")
+            
+            pp = PixelProperties(None,None,None,None)
+            pp.bias = np.array(hdul[1].data)
+            pp.widths = np.array(hdul[2].data)
+            pp.header0 = hdul[0].header
+            pp.header1 = hdul[1].header
+        return pp
 
     def _get_moments(data_set):
         """

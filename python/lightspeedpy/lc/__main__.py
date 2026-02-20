@@ -17,7 +17,7 @@ def main():
                     choices=['sum', 'clip', 'weight'],
                     help='Analysis mode (sum, clip, or weight. Default: sum)'
     )
-    parser.set_defaults(func=get_lc)
+    get_lc(parser.parse_args())
 
 if __name__ == "__main__":
     main()

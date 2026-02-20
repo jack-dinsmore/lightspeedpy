@@ -8,6 +8,15 @@ from .qe import get_qe
 
 DEFAULT_TIME = "2025-09-13 06:00:00.00429"
 
+def is_header_equal(h1, h2):
+    """
+    This function tests whether the headers h1 and h2 correspond to the same observation. Some header keywords change between cubes, and these are not tested."""
+    for key in h1:
+        if key in ["CUBEIDX", "TELRA", "TELDEC", "TELROT", "TELPA", "ROTENC", "TELEL", "TELAZ", "TELHA", "TELST", "TELUT", "AIRMASS", "NAXIS3"]: continue
+        if h1[key] != h2[key]:
+            return False
+    return True
+
 class DataSet:
     """
     Contains metadata relating to one contiguous LightSpeed observation. The data set is never loaded into memory, so many-GB observations can be treated.
@@ -42,7 +51,7 @@ class DataSet:
         for filename in self.filenames[1:]:
             with fits.open(filename) as hdul:
                 self.frames.append(len(hdul[1].data))
-                if str(self.header0) != str(hdul[0].header) or str(self.header1) != str(hdul[1].header):
+                if not is_header_equal(self.header0, hdul[0].header) or not is_header_equal(self.header1, hdul[1].header):
                     raise Exception(f"File {filename} had a different header. Lightspeedpy does not currently support this.")
         self.frames = np.array(self.frames)
                 
@@ -76,13 +85,12 @@ class DataSet:
         filenames = []
         for f in os.listdir(directory):
             if not f.startswith(prefix): continue
-            print(f[-8:-5])
             index = int(f[-8:-5])
             if min_index is not None and index < min_index: continue
             if max_index is not None and index > max_index: continue
             filenames.append(f"{directory}/{f}")
         if len(filenames) == 0:
-            raise Exception(f"The filename {filename} does not exist")
+            raise Exception(f"No filenames with these criteria exist")
 
         return DataSet(filenames, **kwargs)
     
@@ -229,8 +237,8 @@ class DataSet:
         """
         frame_total = np.zeros(self.image_shape)
         n_frames = np.zeros(self.image_shape, int)
-        for frame in self.iterator(kwargs):
-            goodmask = np.isfinite(frame)
+        for frame in self.iterator(**kwargs):
+            goodmask = np.isfinite(frame.image)
             frame_total[goodmask] += frame.image[goodmask]
             n_frames[goodmask] += 1
         return frame_total / n_frames
@@ -253,23 +261,26 @@ class DataSet:
             Pixel properties of the data set
         """
         if not hasattr(self, "_pixel_properties"):
-            self._pixel_properties = PixelProperties.default()
+            self._pixel_properties = PixelProperties.default(self)
         return self._pixel_properties
     
-    def set_bias(self, bias_data_set):
+    def set_bias(self, bias):
         """
         Set the bias
 
         Parameters
         ----------
-        bias_data_set : DataSet
-            A :class:`DataSet` containing the bias observation
+        bias : DataSet or PixelProperties
+            A :class:`DataSet` containing the bias observation, or the :class:`PixelProperties` of the observation
         """
-        if hasattr(self, "_pixel_properties"):
-            raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
-        if not hasattr(bias_data_set, "_pixel_properties"):
-            bias_data_set._pixel_properties = PixelProperties.from_bias(bias_data_set, self)
-        self._pixel_properties = copy.deepcopy(bias_data_set.pixel_properties)
+        if type(bias) is DataSet:
+            if hasattr(self, "_pixel_properties"):
+                raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
+            if not hasattr(bias, "_pixel_properties"):
+                bias._pixel_properties = PixelProperties.from_bias(bias, self)
+            self._pixel_properties = copy.deepcopy(bias.pixel_properties)
+        else:
+            self._pixel_properties = bias
 
     def self_bias(self):
         """

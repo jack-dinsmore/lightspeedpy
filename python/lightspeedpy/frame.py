@@ -5,7 +5,7 @@ from .constants import ADU_PER_ELECTRON
 
 class DataSetIteratorRet:
     def __init__(self, data_set, **kwargs):
-        self.data_set
+        self.data_set = data_set
         self.kwargs = kwargs
 
     def __iter__(self):
@@ -36,7 +36,7 @@ class DataSetIterator:
     def _renew_file(self):
         if self.open_file is not None:
             self.open_file.close()
-        self.open_file = fits.open(self.data_set.runs[self.run_index].filenames[self.file_index])
+        self.open_file = fits.open(self.data_set.filenames[self.file_index])
         self.bundle_index = 0
         self.frame_index = 0
         self.n_bundles = self.open_file[1].data.shape[0]
@@ -66,17 +66,19 @@ class DataSetIterator:
         self.first_run = False
 
         # Get the frame
-        start_pixel = self.data_set.runs[self.run_index].image_shape[0] * self.frame_index
-        image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.runs[self.run_index].image_shape[0]), :]
+        start_pixel = self.data_set.image_shape[0] * self.frame_index
+        image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :].astype(float)
+        image /= ADU_PER_ELECTRON
         if self.cut_cr:
             cosmic_ray_filter(image)
-        image -= self.data_set.pixel_properties.bias()
-        self.image -= self.data_set.dark * self.data_set.seconds_per_frame
+        image -= self.data_set.pixel_properties.bias
+        if self.data_set.dark is not None:
+            image -= self.data_set.dark * self.data_set.seconds_per_frame
         # Don't flat or QE correct; that should be post-processing
 
         timestamp = np.float64(self.open_file[2].data["TIMESTAMP"][self.bundle_index])
-        timestamp += self.data_set.runs[self.run_index].seconds_per_frame * self.frame_index
-        timestamp += self.data_set.runs[self.run_index].start_time
+        timestamp += self.data_set.seconds_per_frame * self.frame_index
+        timestamp += self.data_set.start_time
 
         if self.bar is not None:
             self.bar.update(1)
@@ -94,8 +96,8 @@ class Frame:
     duration : float
         Frame time in seconds
     """
-    def __init__(self, raw_image, timestamp, duration):
-        self.image = raw_image.astype(float) / ADU_PER_ELECTRON
+    def __init__(self, image, timestamp, duration):
+        self.image = image
         self.duration = duration
         self.timestamp = timestamp # Seconds
 

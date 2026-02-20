@@ -31,23 +31,27 @@ class Lightcurve:
     eph : Ephemeris
         Target ephemeris
     """
-    def __init__(self, edges, flux, exposures, duration, eph):
+    def __init__(self, edges, flux, exposures, duration, eph, data_set):
         self.edges = edges
         self.flux = flux
         self.exposures = exposures
         self.duration = duration
         self.ephemeris = eph
+        self.header0 = data_set.header0
+        self.header1 = data_set.header1
 
-    def save(self, data_set, args):
+    def save(self, filename, clobber=False, save_kwargs=None):
         """
         Save the light curve to a file
         
         Parameters
         ----------
-        data_set : DataSet
-            The data set from which the light curve was extracted
-        args : argparse args
-            The arguments of the lc CLI call
+        filename : str
+            The file name to which the light curve should be saved
+        clobber : bool, optional
+            Set to True to allow overwriting
+        save_kwargs : dict, optional
+            Dictionary of keywords to write to the light curve header
         """
         cols = [
             fits.Column(name='PHASEHI', array=self.edges[1:], format='E'),
@@ -61,8 +65,15 @@ class Lightcurve:
         hdu.header["DURATION"] = self.duration
         hdu.header["NU"] = self.ephemeris.nu
 
-        for key, value in vars(args).items():
-            if key == "func": continue
+        if "GPSSTART" in self.header0:
+            hdu.header["GPSSTART"] = self.header0["GPSSTART"]
+
+        for key, value in self.header1.items():
+            if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
+                if len(key) > 8: key = f"HIERARCH {key}"
+                hdu.header[key] = value
+
+        for key, value in vars(save_kwargs).items():
             if type(value) is list:
                 for i, item in enumerate(value):
                     key = f"{key}{i}"
@@ -71,16 +82,10 @@ class Lightcurve:
             else:
                 if len(key) > 8: key = f"HIERARCH {key}"
                 hdu.header[key] = value
-        if "GPSSTART" in data_set.header0:
-            hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
-        for key, value in data_set.header1.items():
-            if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
-                if len(key) > 8: key = f"HIERARCH {key}"
-                hdu.header[key] = value
 
         # Write to file, table in HDU 1
         hdul = fits.HDUList([fits.PrimaryHDU(), hdu])
-        hdul.writeto(args.output, overwrite=True)
+        hdul.writeto(filename, overwrite=clobber)
 
 def get_bin_weights(phase_edges, start_phase, end_phase):
     """

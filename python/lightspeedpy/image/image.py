@@ -1,12 +1,129 @@
 import numpy as np
 from scipy.special import factorial
+from scipy.ndimage import rotate
 from astropy.io import fits
+from astropy.wcs import WCS
 from ..qe import get_qe
+from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
+from ..util import from_hms, from_dms
 
 WEIGHTED_FLAT_P = 0.1
 FLAT_NAN_THRESHOLD = 0.1
-FORBIDDEN_KEYWORDS = "XTENSION BITPIX NAXIS NAXIS1 NAXIS2 NAXIS3 PCOUNT GCOUNT BSCALE BZERO EXTNAME".split()
 
+class Image:
+    """
+    Create an image. The input should be in units of total electrons detected.
+    
+    Parameters
+    ----------
+    image : array-like
+        Image array
+    data_set : DataSet
+        Data set from which the image was derived
+    n_frames : int or array-like
+        Number of frames for which each pixel was exposed. If all pixels were exposed equally, you may supply a single integer. For observations in which pixels have different exposures, provide an image of integers.
+    offset : (int, int), optiona;
+        ra, dec offset in arcseconds for the WCS
+    """
+    def __init__(self, image, data_set, n_frames, offset=None):
+        self.header0 = data_set.header0
+        self.header1 = data_set.header1
+        for frame in data_set:
+            self.frame_duration = frame.duration
+            break
+        if type(n_frames) is int:
+            self.n_frames = n_frames * np.ones(image.shape, int)
+        else:
+            self.n_frames = n_frames
+
+        qe = get_qe()
+        electrons_per_frame = image / self.n_frames
+        photons_per_frame = electrons_per_frame / qe(electrons_per_frame)
+        self.photons_per_second = photons_per_frame / self.frame_duration
+        self.flat_corrected = False
+        if data_set.flat is not None:
+            self.photons_per_second /= data_set.flat
+            self.photons_per_second[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
+            self.flat_corrected = True
+
+        self.rot_angle = float(data_set.header1["TELPA"]) + float(data_set.header1["ROTENC"]) # deg
+        pixscale = PIXEL_SIZE / 3600
+        self.wcs = WCS(naxis=2)
+        self.wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        ra = from_hms(data_set.header1["TELRA"])
+        dec = from_dms(data_set.header1["TELDEC"])
+        if offset is not None:
+            ra -= offset[0]-offset[1]/3600
+            dec -= offset[1]/3600*np.cos(dec*np.pi/180)
+        self.wcs.wcs.crval = [ra, dec]
+        self.wcs.wcs.crpix = [image.shape[0] / 2., image.shape[1] / 2.]
+        self.wcs.wcs.cdelt = [-pixscale, pixscale]
+
+    def save(self, filename, apply_wcs, clobber=False, save_kwargs=None):
+        """
+        Save the image to a file
+        
+        Parameters
+        ----------
+        filename : str
+            The file name to which the light curve should be saved
+        clobber : bool, optional
+            Set to True to allow overwriting
+        save_kwargs : dict, optional
+            Dictionary of keywords to write to the light curve header
+        """
+
+        if apply_wcs:
+            save_image = np.flip(self.photons_per_second, axis=0)
+            bad_mask = ~np.isfinite(save_image)
+            save_image[bad_mask] = np.nanmedian(save_image)
+            save_image = rotate(save_image, self.rot_angle)
+            bad_mask = rotate(bad_mask.astype(float), self.rot_angle)
+            save_image[bad_mask > 0.5] = np.nan
+        else:
+            save_image = np.copy(self.photons_per_second)
+        hdu = fits.PrimaryHDU(save_image)
+        exposure = np.max(self.n_frames * self.frame_duration)
+        
+        # Write header
+        if "GPSSTART" in self.header0:
+            hdu.header["GPSSTART"] = self.header0["GPSSTART"]
+            
+        for key, value in self.header1.items():
+            if key not in FORBIDDEN_KEYWORDS:
+                if len(key) > 8: key = f"HIERARCH {key}"
+                hdu.header[key] = value
+
+        hdu.header["EXPTIME"] = exposure
+
+        if save_kwargs is not None:
+            for key, value in save_kwargs.items():
+                if type(value) == list:
+                    for v in value:
+                        key = f"{key}i"
+                        if len(key) > 8: key = f"HIERARCH {key}"
+                        hdu.header[f"{key}i"] = v
+                    continue
+                if len(key) > 8: key = f"HIERARCH {key}"
+                hdu.header[key] = value
+
+        hdu.header["BUNIT"] = "phot/s"
+        hdu.header["QECORR"] = "T"
+        hdu.header["FLATCORR"] = "T" if self.flat_corrected else "F"
+
+        if apply_wcs:
+            hdu.header.update(self.wcs.to_header())
+        
+        # Write to file
+        hdu.writeto(filename, overwrite=clobber)
+
+def load_image(image, assert_items):
+    with fits.open(image) as hdul:
+        for key in assert_items:
+            assert(key in hdul[0].header)
+            assert(hdul[0].header[key] == assert_items[key])
+        return np.array(hdul[0].data)
+    
 def get_clipped_image(data_set):
     """
     Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame, clipped to zero or 1.
@@ -30,14 +147,7 @@ def get_clipped_image(data_set):
         duration[good_mask] += frame.duration
         n_frames[good_mask] += 1
 
-    image /= get_qe()(image/n_frames)
-    image /= duration
-    image[np.isnan(image)] = np.nanmedian(image)
-    if data_set.flat is not None:
-        image /= data_set.flat
-        image[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
-
-    return image
+    return Image(image, data_set, n_frames)
 
 def get_summed_image(data_set):
     """
@@ -62,50 +172,42 @@ def get_summed_image(data_set):
         duration[good_mask] += frame.duration
         n_frames[good_mask] += 1
 
-    image /= get_qe()(image/n_frames)
-    image /= duration
-    image[np.isnan(image)] = np.nanmedian(image)
-    if data_set.flat is not None:
-        image /= data_set.flat
-        image[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
+    return Image(image, data_set, n_frames)
 
-    return image
+def get_weighted_image_linearized(data_set):
+    """
+    Get a bias, dark, flat corrected image from a :class:`DataSet` after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is << 1.
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The proto-Lightspeed data set
 
-def save_image(image, data_set, args):
-    hdu = fits.PrimaryHDU(image)
-
+    Returns
+    -------
+    array-like
+        The image, crrected for flat TODO and quantum efficiency
+    """
+    numer = np.zeros(data_set.image_shape)
+    denom = np.zeros(data_set.image_shape)
+    pixel_properties = data_set.runs[0].get_pixel_properties() # TODO assumes these all have the same properties
+    w_denom = 1/(2*pixel_properties.widths**2)
+    g_norm = np.sqrt(2*np.pi*pixel_properties.widths**2)
+    n_frames = np.zeros(data_set.image_shape, int)
     for frame in data_set:
         frame_duration = frame.duration
-        break
-    exposure = data_set.num_frames() * frame_duration
-    
-    # Write header
-    for key, value in vars(args).items():
-        if key == "func": continue
-        if type(value) == list:
-            for v in value:
-                key = f"{key}i"
-                if len(key) > 8: key = f"HIERARCH {key}"
-                hdu.header[f"{key}i"] = v
-            continue
-        if len(key) > 8: key = f"HIERARCH {key}"
-        hdu.header[key] = value
-    if "GPSSTART" in data_set.header0:
-        hdu.header["GPSSTART"] = data_set.header0["GPSSTART"]
-    for key, value in data_set.header1.items():
-        if key not in FORBIDDEN_KEYWORDS:
-            if len(key) > 8: key = f"HIERARCH {key}"
-            hdu.header[key] = value
-    hdu.header["EXPTIME"] = exposure
-            
-    hdu.writeto(args.output, overwrite=True)
+        p0 = np.exp(-frame.image**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
+        p1 = np.exp(-(frame.image-1)**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
+        good_mask = ~np.isnan(frame.image)
+        odds = (p1/p0)[good_mask]
+        numer[good_mask] += odds - 1
+        denom[good_mask] += odds**2
+        n_frames[good_mask] += 1
 
-def load_image(image, assert_items):
-    with fits.open(image) as hdul:
-        for key in assert_items:
-            assert(key in hdul[0].header)
-            assert(hdul[0].header[key] == assert_items[key])
-        return np.array(hdul[0].data)
+    image = numer/denom
+    image *= n_frames
+
+    return Image(image, data_set, n_frames)
     
 def get_weighted_image(data_set):
     """
@@ -121,6 +223,7 @@ def get_weighted_image(data_set):
     array-like
         The image, crrected for flat TODO and quantum efficiency
     """
+    raise NotImplementedError()
     # Get initial image
     image = get_summed_image(data_set)
     frame_duration = data_set.runs[0].header1["EXPOSURE TIME"]
@@ -196,44 +299,4 @@ def get_weighted_image(data_set):
         image /= data_set.flat
         image[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
 
-    return image
-
-def get_weighted_image_linearized(data_set):
-    """
-    Get a bias, dark, flat corrected image from a :class:`DataSet` after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is << 1.
-    
-    Parameters
-    ----------
-    data_set : DataSet
-        The proto-Lightspeed data set
-
-    Returns
-    -------
-    array-like
-        The image, crrected for flat TODO and quantum efficiency
-    """
-    numer = np.zeros(data_set.image_shape)
-    denom = np.zeros(data_set.image_shape)
-    pixel_properties = data_set.runs[0].get_pixel_properties() # TODO assumes these all have the same properties
-    w_denom = 1/(2*pixel_properties.widths**2)
-    g_norm = np.sqrt(2*np.pi*pixel_properties.widths**2)
-    for frame in data_set:
-        frame_duration = frame.duration
-        p0 = np.exp(-frame.image**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
-        p1 = np.exp(-(frame.image-1)**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
-        good_mask = ~np.isnan(frame.image)
-        odds = (p1/p0)[good_mask]
-        numer[good_mask] += odds - 1
-        denom[good_mask] += odds**2
-
-    image = numer/denom
-
-    # Divide by flat
-    image /= get_qe()(image)
-    image /= frame_duration
-    image[np.isnan(image)] = np.nanmedian(image)
-    if data_set.flat is not None:
-        image /= data_set.flat
-        image[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
-
-    return image
+    return Image(image, data_set)

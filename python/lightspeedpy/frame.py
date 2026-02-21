@@ -68,6 +68,7 @@ class DataSetIterator:
         # Get the frame
         start_pixel = self.data_set.image_shape[0] * self.frame_index
         image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :].astype(float)
+        image -= 199.5
         image /= ADU_PER_ELECTRON
         if self.cut_cr:
             cosmic_ray_filter(image)

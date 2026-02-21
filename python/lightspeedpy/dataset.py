@@ -150,7 +150,7 @@ class DataSet:
         """
         Print all the filenames in the data set
         """
-        indices = [int(f[-8:-5]) for f in self.filenames] # TODO
+        indices = [int(f[-8:-5]) for f in self.filenames]
 
         # Print all contiguous units
         breaks = [0]

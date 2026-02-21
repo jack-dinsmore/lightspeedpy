@@ -136,7 +136,7 @@ def get_clipped_image(data_set):
     Returns
     -------
     array-like
-        The image, crrected for flat TODO and quantum efficiency
+        The image, crrected for flat and quantum efficiency
     """
     image = np.zeros(data_set.image_shape)
     duration = np.zeros(data_set.image_shape)
@@ -161,7 +161,7 @@ def get_summed_image(data_set):
     Returns
     -------
     array-like
-        The image, crrected for flat TODO and quantum efficiency
+        The image, crrected for flat and quantum efficiency
     """
     duration = np.zeros(data_set.image_shape)
     image = np.zeros(data_set.image_shape)
@@ -186,11 +186,11 @@ def get_weighted_image_linearized(data_set):
     Returns
     -------
     array-like
-        The image, crrected for flat TODO and quantum efficiency
+        The image, crrected for flat and quantum efficiency
     """
     numer = np.zeros(data_set.image_shape)
     denom = np.zeros(data_set.image_shape)
-    pixel_properties = data_set.runs[0].get_pixel_properties() # TODO assumes these all have the same properties
+    pixel_properties = data_set.get_pixel_properties()
     w_denom = 1/(2*pixel_properties.widths**2)
     g_norm = np.sqrt(2*np.pi*pixel_properties.widths**2)
     n_frames = np.zeros(data_set.image_shape, int)

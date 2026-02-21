@@ -23,27 +23,31 @@ def get_dataset(args):
 
     print("Loaded files")
     data_set.display_filenames()
-
-    if args.bias is not None:
-        is_pix_prop = False
-        if os.path.exists(args.bias):
-            with fits.open(args.bias) as hdul:
-                if "PIXPROP" in hdul[0].header and hdul[0].header["PIXPROP"] == "T":
-                    is_pix_prop = True
-        if is_pix_prop:
-            data_set.set_bias(PixelProperties.load(args.bias))
-        else:
-            data_set.set_bias(DataSet.from_first(args.bias))
-    if args.self_bias:
-        data_set.set_self_bias()
     if not args.self_bias and not args.bias:
         print("WARNING: No bias provided")
+
+    def set_bias(ds):
+        if args.bias is not None:
+            is_pix_prop = False
+            if os.path.exists(args.bias):
+                with fits.open(args.bias) as hdul:
+                    if "PIXPROP" in hdul[0].header and hdul[0].header["PIXPROP"] == "T":
+                        is_pix_prop = True
+            if is_pix_prop:
+                ds.set_bias(PixelProperties.load(args.bias))
+            else:
+                ds.set_bias(DataSet.from_first(args.bias))
+        if args.self_bias:
+            ds.set_self_bias()
+
+    set_bias(data_set)
 
     if args.dark is not None:
         try:
             dark = DataSet.from_first(args.dark)
         except:
             dark = DataSet([args.dark])
+        set_bias(dark)
         data_set.set_dark(dark)
     else:
         print("WARNING: No dark provided")
@@ -52,6 +56,7 @@ def get_dataset(args):
             flat = DataSet.from_first(args.flat)
         except:
             flat = DataSet([args.flat])
+        set_bias(flat)
         data_set.set_flat(flat)
     else:
         print("WARNING: No flat provided")

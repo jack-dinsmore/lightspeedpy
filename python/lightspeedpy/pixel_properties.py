@@ -119,8 +119,8 @@ class PixelProperties:
         Get the default pixel properties for a data set with no bias and not self-biased.
         """
         return PixelProperties(
-            np.zeros(data_set.image_shape) * 199.5 / ADU_PER_ELECTRON,
-            np.zeros(data_set.image_shape) * 0.3,
+            np.zeros(data_set.image_shape),
+            np.ones(data_set.image_shape) * 0.3,
             data_set,
             data_set
         )

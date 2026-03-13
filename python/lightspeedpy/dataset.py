@@ -83,15 +83,18 @@ class DataSet:
         prefix = filename[:-8]
 
         filenames = []
+        indices = []
         for f in os.listdir(directory):
             if not f.startswith(prefix): continue
             index = int(f[-8:-5])
             if min_index is not None and index < min_index: continue
             if max_index is not None and index > max_index: continue
             filenames.append(f"{directory}/{f}")
+            indices.append(index)
         if len(filenames) == 0:
             raise Exception(f"No filenames with these criteria exist")
-
+        
+        filenames = np.array(filenames)[np.argsort(indices)]
         return DataSet(filenames, **kwargs)
     
     def from_dir(directory, **kwargs):
@@ -151,22 +154,27 @@ class DataSet:
         Print all the filenames in the data set
         """
         indices = [int(f[-8:-5]) for f in self.filenames]
+        sorted_frames = np.array(self.frames)[np.argsort(indices)]
+        sorted_filenames = np.array(self.filenames)[np.argsort(indices)]
+        indices = np.array(indices)[np.argsort(indices)]
 
         # Print all contiguous units
         breaks = [0]
         for i in range(1, len(indices)):
             if indices[i] != indices[i-1]+1:
                 breaks.append(i)
+        breaks.append(len(indices))
+
         for i in range(len(breaks)-1):
             start = breaks[i]
             stop = breaks[i+1]-1
             if stop - start > 2:
-                print(self.filenames[start], f"({self.frames[start]}) frames")
+                print(sorted_filenames[start], f"({sorted_frames[start]}) frames")
                 print("...")
-                print(self.filenames[stop], f"({self.frames[stop]}) frames")
+                print(sorted_filenames[stop], f"({sorted_frames[stop]}) frames")
             else:
                 for j in range(start, stop+1):
-                    print(self.filenames[j], f"({self.frames[j]}) frames")
+                    print(sorted_filenames[j], f"({sorted_frames[j]}) frames")
 
     def bootstrap(self):
         """
@@ -282,7 +290,7 @@ class DataSet:
         else:
             self._pixel_properties = bias
 
-    def self_bias(self):
+    def set_self_bias(self):
         """
         Estimate an observation from these data. This can only be done accurately for very fast readout of a faint source, where most of the pixels detect zero photons.
         """

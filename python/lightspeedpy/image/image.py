@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.special import factorial
+from scipy.ndimage import convolve
 from scipy.ndimage import rotate
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -7,7 +8,6 @@ from ..qe import get_qe
 from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
 from ..util import from_hms, from_dms
 
-WEIGHTED_FLAT_P = 0.1
 FLAT_NAN_THRESHOLD = 0.1
 
 class Image:
@@ -58,6 +58,18 @@ class Image:
         self.wcs.wcs.crval = [ra, dec]
         self.wcs.wcs.crpix = [image.shape[0] / 2., image.shape[1] / 2.]
         self.wcs.wcs.cdelt = [-pixscale, pixscale]
+
+    def nan_remove(self):
+        """
+        Replace all nans with averages of the surrounding pixels
+        """
+        valid = ~np.isnan(self.photons_per_second)
+        kernel = np.ones((3, 3))
+        image_filled = np.where(valid, self.photons_per_second, 0.0)
+        neighbor_sum = convolve(image_filled, kernel, mode="constant", cval=0.0)
+        neighbor_count = convolve(valid.astype(float), kernel, mode="constant", cval=0.0)
+        local_mean = neighbor_sum / neighbor_count
+        self.photons_per_second[~valid] = local_mean[~valid]
 
     def save(self, filename, apply_wcs, clobber=False, save_kwargs=None):
         """
@@ -139,12 +151,10 @@ def get_clipped_image(data_set):
         The image, crrected for flat and quantum efficiency
     """
     image = np.zeros(data_set.image_shape)
-    duration = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
         image[good_mask] += np.round(frame.image[good_mask])
-        duration[good_mask] += frame.duration
         n_frames[good_mask] += 1
 
     return Image(image, data_set, n_frames)
@@ -163,13 +173,11 @@ def get_summed_image(data_set):
     array-like
         The image, crrected for flat and quantum efficiency
     """
-    duration = np.zeros(data_set.image_shape)
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
         image[good_mask] += frame.image[good_mask]
-        duration[good_mask] += frame.duration
         n_frames[good_mask] += 1
 
     return Image(image, data_set, n_frames)
@@ -190,23 +198,19 @@ def get_weighted_image_linearized(data_set):
     """
     numer = np.zeros(data_set.image_shape)
     denom = np.zeros(data_set.image_shape)
-    pixel_properties = data_set.get_pixel_properties()
-    w_denom = 1/(2*pixel_properties.widths**2)
-    g_norm = np.sqrt(2*np.pi*pixel_properties.widths**2)
     n_frames = np.zeros(data_set.image_shape, int)
     for frame in data_set:
-        frame_duration = frame.duration
-        p0 = np.exp(-frame.image**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
-        p1 = np.exp(-(frame.image-1)**2 * w_denom) + WEIGHTED_FLAT_P*g_norm
         good_mask = ~np.isnan(frame.image)
-        odds = (p1/p0)[good_mask]
+        masked_image = frame.image[good_mask]
+        p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask)
+        p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask)
+        odds = p1/p0
         numer[good_mask] += odds - 1
         denom[good_mask] += odds**2
         n_frames[good_mask] += 1
 
     image = numer/denom
     image *= n_frames
-
     return Image(image, data_set, n_frames)
     
 def get_weighted_image(data_set):

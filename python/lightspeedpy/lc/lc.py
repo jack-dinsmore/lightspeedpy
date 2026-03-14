@@ -250,7 +250,6 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
 
     for frame in data_set:
         if SMEAR_FRAME:
-            raise NotImplemented
             start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
             end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
             weights = get_bin_weights(phase_edges, start_phase, end_phase)

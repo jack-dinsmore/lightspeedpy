@@ -146,10 +146,12 @@ class PixelProperties:
 
         if mask is None:
             xi = (image - true_n - self.betas)/self.alphas
-            return np.exp(self.ks * np.arctan(xi)) / (1 + xi**2)**self.ms * self.norms
+            pdf = np.exp(self.ks * np.arctan(xi)) / (1 + xi**2)**self.ms * self.norms
         else:
             xi = (image - true_n - self.betas[mask])/self.alphas[mask]
-            return np.exp(self.ks[mask] * np.arctan(xi)) / (1 + xi**2)**self.ms[mask] * self.norms[mask]
+            pdf = np.exp(self.ks[mask] * np.arctan(xi)) / (1 + xi**2)**self.ms[mask] * self.norms[mask]
+
+        return pdf * 0.99 + 0.01
 
     def default(data_set):
         """

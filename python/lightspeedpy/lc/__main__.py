@@ -1,32 +1,6 @@
 import argparse
-from ..cli import add_dataset_args, get_dataset
-from ..image.image import *
-from ..ephemeris import Ephemeris
-from .lc import *
-
-def get_lc(args):
-    data_set = get_dataset(args)
-    print("Load files")
-    data_set.display_filenames()
-    # data_set.bootstrap()
-
-    ephemeris = Ephemeris(args.eph, data_set, args.observatory)
-
-    if args.mode == "sum":
-        lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
-    elif args.mode == "clip":
-        lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
-    elif args.mode == "weight":
-        if args.image is None:
-            image = None
-        else:
-            image = load_image(args.image, assert_items=dict(flat=None))
-        lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
-
-    save_kwargs = vars(args)
-    if "func" in save_kwargs: del save_kwargs["func"]
-    lc.save(args.output, args.clobber, save_kwargs)
-
+from ..cli import add_dataset_args
+from .lc import get_lc, get_lc_errors
 
 def main():
     parser = argparse.ArgumentParser(prog="lightspeedpy.lc", description="Lightspeed processing CLI for light curve extraction")
@@ -36,6 +10,7 @@ def main():
     parser.add_argument("--observatory", help="Observatory (Default: Las Campanas Observatory)", default="Las Campanas Observatory")
     parser.add_argument("--bins", required=True, help="Number of bins", type=int)
     parser.add_argument("--image", help="Name of the image, if it already exists")
+    parser.add_argument("--errors", help="Set to estimate bootstrapped errors", action=argparse.BooleanOptionalAction)
     parser.add_argument('--mode',
                     default='sum',
                     const='sum',
@@ -43,7 +18,11 @@ def main():
                     choices=['sum', 'clip', 'weight'],
                     help='Analysis mode (sum, clip, or weight. Default: sum)'
     )
-    get_lc(parser.parse_args())
+    args = parser.parse_args()
+    if args.errors:
+        get_lc_errors(args)
+    else:
+        get_lc(args)
 
 if __name__ == "__main__":
     main()

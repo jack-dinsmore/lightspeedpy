@@ -44,7 +44,7 @@ def get_dataset(args):
 
     if args.dark is not None:
         try:
-            dark = DataSet.from_first(args.dark)
+            dark = DataSet.from_first(args.dark, cut_cr=False)
         except:
             dark = DataSet([args.dark])
         set_bias(dark)

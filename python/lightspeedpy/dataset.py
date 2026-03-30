@@ -50,7 +50,7 @@ class DataSet:
 
         for filename in self.filenames[1:]:
             with fits.open(filename) as hdul:
-                self.frames.append(len(hdul[1].data))
+                self.frames.append(hdul[1].shape[0] * self.frames_per_bundle)
                 if not is_header_equal(self.header0, hdul[0].header) or not is_header_equal(self.header1, hdul[1].header):
                     raise Exception(f"File {filename} had a different header. Lightspeedpy does not currently support this.")
         self.frames = np.array(self.frames)
@@ -76,7 +76,7 @@ class DataSet:
         
         Parameters
         -----------------
-        See :class:`DataSet`
+        See :class:`DataSet` for keyword parameters
         """
         directory = os.path.dirname(filename)
         filename = os.path.basename(filename)
@@ -86,7 +86,7 @@ class DataSet:
         indices = []
         for f in os.listdir(directory):
             if not f.startswith(prefix): continue
-            index = int(f[-8:-5])
+            index = int(f[len(prefix):-5])
             if min_index is not None and index < min_index: continue
             if max_index is not None and index > max_index: continue
             filenames.append(f"{directory}/{f}")
@@ -176,7 +176,7 @@ class DataSet:
                 for j in range(start, stop+1):
                     print(sorted_filenames[j], f"({sorted_frames[j]}) frames")
 
-    def bootstrap(self):
+    def bootstrap(self, seed):
         """
         Resamples the file names for use in bootstrapping. If you want to estimate uncertainties, redo your analysis with many :meth:`DataSet.bootstrap`'ed data sets and calculate the standard deviation of your results.
 
@@ -184,7 +184,8 @@ class DataSet:
         -----
         You should never bootstrap a data set twice. Instead, you should always create a copy of the original data set with copy.deepcopy and then bootstrap the copy.
         """
-        indices = np.random.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
+        rng = np.random.default_rng(seed)
+        indices = rng.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
         self.filenames = self.filenames[indices]
         self.frames = self.frames[indices]
 

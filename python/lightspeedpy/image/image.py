@@ -2,6 +2,7 @@ import numpy as np
 from scipy.special import factorial
 from scipy.ndimage import convolve
 from scipy.ndimage import rotate
+import copy
 from astropy.io import fits
 from astropy.wcs import WCS
 from ..qe import get_qe
@@ -28,7 +29,7 @@ class Image:
     def __init__(self, image, data_set, n_frames, offset=None):
         self.header0 = data_set.header0
         self.header1 = data_set.header1
-        for frame in data_set:
+        for frame in data_set.iterator(use_bar=False):
             self.frame_duration = frame.duration
             break
         if type(n_frames) is int:
@@ -45,6 +46,7 @@ class Image:
             self.photons_per_second /= data_set.flat
             self.photons_per_second[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
             self.flat_corrected = True
+        self.pixel_properties = copy.deepcopy(data_set.pixel_properties)
 
         self.rot_angle = float(data_set.header1["TELPA"]) + float(data_set.header1["ROTENC"]) # deg
         pixscale = PIXEL_SIZE / 3600
@@ -70,6 +72,20 @@ class Image:
         neighbor_count = convolve(valid.astype(float), kernel, mode="constant", cval=0.0)
         local_mean = neighbor_sum / neighbor_count
         self.photons_per_second[~valid] = local_mean[~valid]
+        
+    def smooth(self, sigma):
+        line = np.arange(-np.ceil(sigma*3), np.ceil(sigma*3)+1)
+        xs, ys = np.meshgrid(line,line)
+        gauss = np.exp(-(xs**2 + ys**2) / (2*sigma**2))
+        gauss /= np.sum(gauss)
+
+        bad_mask = ~np.isfinite(self.photons_per_second)
+        self.photons_per_second[bad_mask] = np.median(self.photons_per_second[~bad_mask])
+        weight_image = 1/self.pixel_properties.widths**2
+        blurred_image = convolve(self.photons_per_second * weight_image, gauss)
+        blurred_weights = convolve(weight_image, gauss)
+        self.photons_per_second = blurred_image / blurred_weights
+        self.photons_per_second[bad_mask] = np.nan
 
     def save(self, filename, apply_wcs, clobber=False, save_kwargs=None):
         """
@@ -129,11 +145,12 @@ class Image:
         # Write to file
         hdu.writeto(filename, overwrite=clobber)
 
-def load_image(image, assert_items):
+def load_image(image, assert_items=None):
     with fits.open(image) as hdul:
-        for key in assert_items:
-            assert(key in hdul[0].header)
-            assert(hdul[0].header[key] == assert_items[key])
+        if assert_items is not None:
+            for key in assert_items:
+                assert(key in hdul[0].header)
+                assert(hdul[0].header[key] == assert_items[key])
         return np.array(hdul[0].data)
     
 def get_clipped_image(data_set):

@@ -17,6 +17,8 @@ def get_image(args):
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
     image.nan_remove()
+    if args.smooth is not None:
+        image.smooth(float(args.smooth))
     image.save(args.output, args.wcs, args.clobber, save_kwargs)
 
 
@@ -24,6 +26,7 @@ def main():
     parser = argparse.ArgumentParser(prog="lightspeedpy.image", description="Lightspeed processing CLI for image extraction")
     add_dataset_args(parser)
     parser.add_argument("--wcs", help="Apply wcs to final image", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--smooth",  required=False, help="Gaussian smoothing sigma (pixels)")
     parser.add_argument('--mode',
                     default='sum',
                     const='sum',

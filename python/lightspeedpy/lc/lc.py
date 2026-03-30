@@ -1,17 +1,89 @@
 import numpy as np
 from astropy.io import fits
-from scipy.special import factorial
+from ..cli import get_dataset
 from ..regions import Region
 from ..ephemeris import Ephemeris
+from ..image.image import load_image
+import copy
+from multiprocessing import Pool
 
 MAX_N_SCALE = 2
-SMEAR_FRAME = False # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
+SMEAR_FRAME = True # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
 
 def delta_phase(phase_start, phase_end):
     if phase_end > phase_start:
         return phase_end - phase_start
     else:
         return 1 - (phase_start - phase_end)
+
+def get_bootstrap_instance(seed, data_set_orig, ephemeris, args, image):
+    data_set = copy.deepcopy(data_set_orig)
+    data_set.bootstrap(seed)
+    if args.mode == "sum":
+        lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
+    elif args.mode == "clip":
+        lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
+    elif args.mode == "weight":
+        lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
+    return lc
+
+def get_lc(args):
+    data_set = get_dataset(args)
+    print("Load files")
+    data_set.display_filenames()
+    ephemeris = Ephemeris(args.eph, data_set, args.observatory)
+
+    image = None
+    if args.mode == "weight" and args.image is not None:
+        image = load_image(args.image)
+    
+    if args.mode == "sum":
+        lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
+    elif args.mode == "clip":
+        lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
+    elif args.mode == "weight":
+        lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
+
+    save_kwargs = vars(args)
+    if "func" in save_kwargs: del save_kwargs["func"]
+    lc.save(args.output, args.clobber, save_kwargs)
+
+def get_lc_errors(args):
+    data_set = get_dataset(args)
+    print("Load files")
+    data_set.display_filenames()
+    ephemeris = Ephemeris(args.eph, data_set, args.observatory)
+    N_LCS = 16
+    image = None
+    if args.mode == "weight" and args.image is not None:
+        image = load_image(args.image)
+    
+    params = []
+    for _ in range(N_LCS):
+        params.append([np.random.randint(2**32), data_set, ephemeris, args, image])
+    
+    with Pool() as pool:
+        lcs = pool.starmap(get_bootstrap_instance, params)
+    
+    lc_m0 = np.zeros_like(lcs[0].flux)
+    lc_m1 = np.zeros_like(lcs[0].flux)
+    lc_m2 = np.zeros_like(lcs[0].flux)
+    for lc in lcs:
+        lc_m0 += lc.exposures
+        lc_m1 += lc.flux * lc.exposures
+        lc_m2 += lc.flux * lc.flux * lc.exposures
+    lc_m1 /= lc_m0
+    lc_m2 /= lc_m0
+    lc_std = np.sqrt(lc_m2 - lc_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
+
+    main_lc = lcs[0]
+    main_lc.exposures = lc_m0 / N_LCS
+    main_lc.flux = lc_m1 * main_lc.exposures
+    main_lc.errors = lc_std * main_lc.exposures
+
+    save_kwargs = vars(args)
+    if "func" in save_kwargs: del save_kwargs["func"]
+    main_lc.save(args.output, args.clobber, save_kwargs)
 
 class Lightcurve:
     """
@@ -34,8 +106,9 @@ class Lightcurve:
         self.edges = edges
         self.flux = flux
         self.exposures = exposures
+        self.errors = np.zeros(len(flux))
 
-        for frame in data_set:
+        for frame in data_set.iterator(use_bar=False):
             self.duration = frame.duration
             break
 
@@ -60,6 +133,7 @@ class Lightcurve:
             fits.Column(name='PHASEHI', array=self.edges[1:], format='E'),
             fits.Column(name='PHASELO', array=self.edges[:-1], format='E'),
             fits.Column(name='FLUX', array=self.flux, format='E'),
+            fits.Column(name='ERROR', array=self.errors, format='E'),
             fits.Column(name='EXPOSURE', array=self.exposures, format='E'),
         ]
         hdu = fits.BinTableHDU.from_columns(cols)
@@ -243,10 +317,11 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     roi = Region.load(reg_file)
     phase_edges = np.linspace(0, 1, n_bins+1)
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
-    roi_mask = roi.check_inside_absolute(xs, ys)
+    roi_mask = roi.check_inside_absolute(xs, ys) & ~np.isnan(data_set.pixel_properties.ks)
 
     if image is None:
         image = np.ones(data_set.image_shape)
+    image /= np.sum(image)# ???
 
     for frame in data_set:
         if SMEAR_FRAME:
@@ -264,9 +339,9 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
         p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask)
         p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask)
         odds = p1/p0
-        
-        numer += weights*np.sum(odds - 1)
-        denom += weights*np.sum(odds**2)
+
+        numer += weights*np.sum((odds - 1) * image[good_mask])
+        denom += weights*np.sum((odds * image[good_mask])**2)
         # TODO put PSF weighting back in, using the `image` variable`.
 
         exposures += frame.duration*weights

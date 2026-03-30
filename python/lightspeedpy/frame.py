@@ -70,13 +70,13 @@ class DataSetIterator:
         image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :].astype(float)
         image -= 199.5
         image /= ADU_PER_ELECTRON
-        if self.cut_cr:
-            cosmic_ray_filter(image)
         image -= self.data_set.pixel_properties.bias
         if self.data_set.dark is not None:
             image -= self.data_set.dark * self.data_set.seconds_per_frame
-        # Don't flat or QE correct; that should be post-processing
+        if self.cut_cr:
+            cosmic_ray_filter(image)
 
+        # Don't flat or QE correct; that should be post-processing
         timestamp = np.float64(self.open_file[2].data["TIMESTAMP"][self.bundle_index])
         timestamp += self.data_set.seconds_per_frame * self.frame_index
         timestamp += self.data_set.start_time
@@ -91,7 +91,7 @@ class Frame:
     Attributes
     ----------
     image : array-like
-        Contains the frame image in units of electrons. If darks and biases were set, they are already subtracted. The flat was not included, nor the QE
+        Contains the frame image in units of electrons. If darks and biases were set, they are already subtracted. If a dark was not set, it is assumed to be zero. If the bias is not set, it is assumed to be 199.5 ADU. The flat is not included, nor the QE.
     timestamp : float
         Time in seconds after camera start
     duration : float

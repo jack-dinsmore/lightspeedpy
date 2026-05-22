@@ -3,6 +3,7 @@ target/
 data/moments.npy
 __pycache__/
 tmp/
+rust-files
 
 *.so
 *.egg-info

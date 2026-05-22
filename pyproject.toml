@@ -1,17 +1,14 @@
-[build-system]
-requires = ["setuptools>=65", "wheel", "maturin>=1.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "lightspeedpy"
 version = "0.1.0"
 requires-python = ">=3.9"
-dependencies = {file = ["requirements.txt"]}
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.13",
+    "tqdm",
+    "astropy>=6.1",
+    "pint-pulsar>=1.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["python"]
-
-[tool.maturin]
-bindings = "pyo3"
-module-name = "lightspeedpy._rust"
-python-source = "python"

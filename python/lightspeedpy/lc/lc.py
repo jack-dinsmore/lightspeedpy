@@ -3,12 +3,24 @@ from astropy.io import fits
 from ..cli import get_dataset
 from ..regions import Region
 from ..ephemeris import Ephemeris
-from ..image.image import load_image
 import copy
+from ..constants import PIXEL_SIZE
 from multiprocessing import Pool
 
 MAX_N_SCALE = 2
 SMEAR_FRAME = True # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
+
+def make_psf_image(data_set, reg_file, sigma_arcsec):
+    xline = np.arange(data_set.image_shape[0])
+    yline = np.arange(data_set.image_shape[1])
+    xs, ys = np.meshgrid(xline, yline, indexing="ij")
+    region = Region.load(reg_file)
+    region_mask = region.check_inside_absolute(xs, ys)
+    center = (np.argmax(np.sum(region_mask, axis=0)), np.argmax(np.sum(region_mask, axis=1)))
+
+    sigma_pixels = sigma_arcsec / PIXEL_SIZE
+    image = np.exp(-(xs - center[0])**2 + (ys - center[1])**2 / (2*sigma_pixels**2))
+    return image
 
 def delta_phase(phase_start, phase_end):
     if phase_end > phase_start:
@@ -27,15 +39,15 @@ def get_bootstrap_instance(seed, data_set_orig, ephemeris, args, image):
         lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
     return lc
 
-def get_lc(args):
+def get_lc_no_errors(args):
     data_set = get_dataset(args)
     print("Load files")
     data_set.display_filenames()
     ephemeris = Ephemeris(args.eph, data_set, args.observatory)
 
     image = None
-    if args.mode == "weight" and args.image is not None:
-        image = load_image(args.image)
+    if args.mode == "weight" and args.psf is not None:
+        image = make_psf_image(data_set, args.reg, args.psf)
     
     if args.mode == "sum":
         lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
@@ -55,8 +67,8 @@ def get_lc_errors(args):
     ephemeris = Ephemeris(args.eph, data_set, args.observatory)
     N_LCS = 16
     image = None
-    if args.mode == "weight" and args.image is not None:
-        image = load_image(args.image)
+    if args.mode == "weight" and args.psf is not None:
+        image = make_psf_image(data_set, args.reg, args.psf)
     
     params = []
     for _ in range(N_LCS):
@@ -85,36 +97,71 @@ def get_lc_errors(args):
     if "func" in save_kwargs: del save_kwargs["func"]
     main_lc.save(args.output, args.clobber, save_kwargs)
 
+def add_lc(args):
+    lc = None
+    for arg in args.inputs:
+        if lc is None:
+            lc = Lightcurve.load(arg)
+        else:
+            lc += Lightcurve.load(arg)
+    lc.save(args.output, clobber=args.clobber)
+
 class Lightcurve:
     """
     Class to store light curves and save them
-
-    Parameters
-    ----------
-    edges : array-like
-        Edges of the phase bins of the light curve
-    fluxes : array-like
-        Flux in each light curve bin. If edges has length N+1, fluxes should have length N
-    exposures : array-like
-        Time in seconds spent in each bin
-    duration : array-like
-        Duration of each frame, in seconds
-    eph : Ephemeris
-        Target ephemeris
     """
-    def __init__(self, edges, flux, exposures, eph, data_set):
+    def __init__(self, edges, flux, exposures, nu, header0, header1, duration, errors=None):
         self.edges = edges
         self.flux = flux
         self.exposures = exposures
-        self.errors = np.zeros(len(flux))
+        if errors is None:
+            self.errors = np.zeros(len(flux))
+        else:
+            self.errors = errors
+        self.duration = duration
+        self.nu = nu
+        self.header0 = header0
+        self.header1 = header1
 
+    def from_data_set(self, data_set, edges, flux, exposures, eph):
+        """
+        Create a light curve object from a data set
+
+        Parameters
+        ----------
+        data_set: DataSet
+            Data set object
+        edges : array-like
+            Edges of the phase bins of the light curve
+        fluxes : array-like
+            Flux in each light curve bin. If edges has length N+1, fluxes should have length N
+        exposures : array-like
+            Time in seconds spent in each bin
+        duration : array-like
+            Duration of each frame, in seconds
+        eph : Ephemeris
+            Target ephemeris
+        """
         for frame in data_set.iterator(use_bar=False):
-            self.duration = frame.duration
+            duration = frame.duration
             break
+        return Lightcurve.from_data_set(edges, flux, exposures, eph.nu, data_set.header0, data_set.header1, duration)
 
-        self.ephemeris = eph
-        self.header0 = data_set.header0
-        self.header1 = data_set.header1
+    def load(self, filename):
+        with fits.open(filename) as hdul:
+            header0 = hdul[0].header
+            header1 = hdul[1].header
+            edges = np.array(hdul[1].data["PHASELO"])
+            edges = np.append(edges, hdul[1].data["PHASEHI"][-1])
+            flux = np.array(hdul[1].data["FLUX"])
+            errors = np.array(hdul[1].data["ERROR"])
+            exposures = np.array(hdul[1].data["EXPOSURE"])
+            duration = hdul[1].header["DURATION"]
+            nu = hdul[1].header["NU"]
+        return Lightcurve.from_data_set(edges, flux, exposures, nu, header0, header1, duration, errors)
+    
+    def __iadd__(self, other):
+        print("A")
 
     def save(self, filename, clobber=False, save_kwargs=None):
         """
@@ -238,7 +285,7 @@ def get_summed_lc(data_set, n_bins, reg_file, ephemeris):
         exposures += frame.duration*weights
 
     fluxes = electrons / exposures # Counts per second
-    return Lightcurve(phase_edges, fluxes, exposures, ephemeris, data_set)
+    return Lightcurve.from_data_set(phase_edges, fluxes, exposures, ephemeris, data_set)
 
 def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
     """
@@ -286,7 +333,7 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
         exposures += frame.duration*weights
 
     fluxes = electrons / exposures # Counts per bin
-    return Lightcurve(phase_edges, fluxes, exposures, ephemeris, data_set)
+    return Lightcurve.from_data_set(phase_edges, fluxes, exposures, ephemeris, data_set)
 
 def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     """
@@ -317,7 +364,7 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     roi = Region.load(reg_file)
     phase_edges = np.linspace(0, 1, n_bins+1)
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
-    roi_mask = roi.check_inside_absolute(xs, ys) & ~np.isnan(data_set.pixel_properties.ks)
+    roi_mask = roi.check_inside_absolute(xs, ys)
 
     if image is None:
         image = np.ones(data_set.image_shape)
@@ -347,4 +394,4 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
         exposures += frame.duration*weights
 
     fluxes = numer / denom # TODO normalization may be wrong
-    return Lightcurve(phase_edges, fluxes, exposures, ephemeris, data_set)
+    return Lightcurve.from_data_set(phase_edges, fluxes, exposures, ephemeris, data_set)

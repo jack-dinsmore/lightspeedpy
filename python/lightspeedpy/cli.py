@@ -36,7 +36,7 @@ def get_dataset(args):
             if is_pix_prop:
                 ds.set_bias(PixelProperties.load(args.bias))
             else:
-                ds.set_bias(DataSet.from_first(args.bias))
+                ds.set_bias(DataSet.from_first(args.bias, cut_cr=False))
         if args.self_bias:
             ds.set_self_bias()
 
@@ -44,16 +44,17 @@ def get_dataset(args):
 
     if args.dark is not None:
         try:
-            dark = DataSet.from_first(args.dark, cut_cr=False)
+            dark = DataSet.from_first(args.dark, cr_thresh=50)
         except:
             dark = DataSet([args.dark])
         set_bias(dark)
         data_set.set_dark(dark)
     else:
         print("WARNING: No dark provided")
+
     if args.flat is not None:
         try:
-            flat = DataSet.from_first(args.flat)
+            flat = DataSet.from_first(args.flat, cut_cr=False)
         except:
             flat = DataSet([args.flat])
         set_bias(flat)

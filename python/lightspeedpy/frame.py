@@ -1,6 +1,7 @@
 import numpy as np
 import tqdm
 from astropy.io import fits
+from scipy.ndimage import median_filter
 from .constants import ADU_PER_ELECTRON
 
 class DataSetIteratorRet:
@@ -12,7 +13,7 @@ class DataSetIteratorRet:
         return DataSetIterator(self.data_set, **self.kwargs)
 
 class DataSetIterator:
-    def __init__(self, data_set, cut_cr=True, use_bar=True, max_frames=None):
+    def __init__(self, data_set, cut_cr=True, use_bar=True, max_frames=None, cr_thresh=20):
         self.data_set = data_set
         self.cut_cr = cut_cr
         self.max_frames = max_frames
@@ -21,9 +22,13 @@ class DataSetIterator:
         self.file_index = 0
         self.first_run = True
         self.total_frame_index = 0
+        self.cr_thresh = cr_thresh
 
         self._renew_file()
         n_frames = data_set.num_frames()
+
+        if max_frames is not None:
+            use_bar = use_bar and max_frames > 1 # Don't use the bar if there's > 1 frame
 
         if use_bar:
             if max_frames is not None and max_frames < n_frames:
@@ -43,7 +48,8 @@ class DataSetIterator:
 
     def _stop(self):
         self.open_file.close()
-        self.bar.close()
+        if self.bar is not None:
+            self.bar.close()
         raise StopIteration
 
     def __next__(self):
@@ -67,14 +73,16 @@ class DataSetIterator:
 
         # Get the frame
         start_pixel = self.data_set.image_shape[0] * self.frame_index
-        image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :].astype(float)
+        image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :]
+        is_saturated = np.max(image) >= 65_535
+        image = image.astype(float)
         image -= 199.5
         image /= ADU_PER_ELECTRON
         image -= self.data_set.pixel_properties.bias
         if self.data_set.dark is not None:
             image -= self.data_set.dark * self.data_set.seconds_per_frame
         if self.cut_cr:
-            cosmic_ray_filter(image)
+            cosmic_ray_filter(image, self.cr_thresh)
 
         # Don't flat or QE correct; that should be post-processing
         timestamp = np.float64(self.open_file[2].data["TIMESTAMP"][self.bundle_index])
@@ -84,7 +92,7 @@ class DataSetIterator:
         if self.bar is not None:
             self.bar.update(1)
 
-        return Frame(image, timestamp, self.data_set.seconds_per_frame)
+        return Frame(image, timestamp, self.data_set.seconds_per_frame, is_saturated)
     
 class Frame:
     """
@@ -97,23 +105,21 @@ class Frame:
     duration : float
         Frame time in seconds
     """
-    def __init__(self, image, timestamp, duration):
+    def __init__(self, image, timestamp, duration, is_saturated):
         self.image = image
         self.duration = duration
         self.timestamp = timestamp # Seconds
+        self.is_saturated = is_saturated
 
-def cosmic_ray_filter(image):
+def cosmic_ray_filter(image, cr_thresh):
     # Compute laplacian
-    step=1 # Pixels
-    img = np.pad(image, step, mode='constant')
-    laplacian = (
-        img[step:-step, 2*step:] +
-        img[2*step:, step:-step] +
-        img[:-2*step, step:-step] +
-        img[step:-step, :-2*step] -
-        4 * img[step:-step, step:-step]
-    )/step**2
-    cr_sensor = -laplacian/image
+    rolling_median = median_filter(image, size=3)
+    cr_sensor = (image - rolling_median) / np.sqrt(np.maximum(rolling_median, 0) + 1)
+    cr_sensor = np.abs(cr_sensor)
+    cr_sensor[image < -2] = cr_thresh + 1 # Remove very negative flux pixels
 
     # Mask CRs TODO is this working well for pulsars? I made it for LH
-    image[(cr_sensor > 2) & (image > 3)] = np.nan
+    cr_mask = cr_sensor > cr_thresh
+    if np.mean(cr_mask) > 0.03:
+        print(f"Warning: Masking more than 3% of the image as CRs ({np.mean(cr_mask)*100:.2f}%)")
+    image[cr_mask] = np.nan

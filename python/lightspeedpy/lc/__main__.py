@@ -1,16 +1,10 @@
-import argparse
+import argparse, sys
 from ..cli import add_dataset_args
-from .lc import get_lc_no_errors, get_lc_errors, add_lc
+from .lc import get_lc, add_lc
 
-def get_lc(args):
-    if args.errors:
-        get_lc_errors(args)
-    else:
-        get_lc_no_errors(args)
 
 def main():
     parser = argparse.ArgumentParser(prog="lightspeedpy.lc", description="Lightspeed processing CLI for light curve extraction")
-    subparsers = parser.add_subparsers(dest="command")
 
     add_dataset_args(parser)
     parser.add_argument("--roi", required=True, help="Region file")
@@ -27,15 +21,20 @@ def main():
                     help='Analysis mode (sum, clip, or weight. Default: sum)'
     )
     parser.set_defaults(func=get_lc)
+    get_lc(parser.parse_args())
 
-    add_parser = subparsers.add_parser("add")
-    add_parser.add_argument("--inputs", nargs="+", required=True, help="Light curve files to combine")
-    add_parser.add_argument("--output", required=True, help="Combined light curve file name")
-    add_parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
-    add_parser.set_defaults(func=add_lc)
+def add_main():
+    parser = argparse.ArgumentParser(prog="lightspeedpy.lc", description="Lightspeed processing CLI for light curve extraction")
 
-    args = parser.parse_args()
-    args.func(args)
+    parser.add_argument("--inputs", nargs="+", required=True, help="Light curve files to combine")
+    parser.add_argument("--output", required=True, help="Combined light curve file name")
+    parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
+    parser.set_defaults(func=add_lc)
+
+    add_lc(parser.parse_args(sys.argv[2:]))
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "add":
+        add_main()
+    else:
+        main()

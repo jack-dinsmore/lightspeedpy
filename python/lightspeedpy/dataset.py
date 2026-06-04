@@ -27,12 +27,21 @@ class DataSet:
     2. Use :meth:`DataSet.from_dir` to create a data set out of all the files in a directory
     3. Use the constructor and pass all the files you want to be in the data set as a parameter.
 
+    The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
+
     Parameters
     ----------
     filenames : list of str
         List of files to include
+
+    max_frames : int, optional
+        Maximum number of frames to iterate through. Default: all the frames
+    use_bar : bool, optional
+        Show a progress bar. Default: True.
     cut_cr : bool, optional
-        Set to False to no longer cut CRs.
+        Cut cosmic rays. Default: True
+    cr_thresh: int, optional
+        Cosmic ray cutting threshold. Default: 20
     """
     def __init__(self, filenames, **kwargs):
         if len(filenames) == 0:
@@ -63,20 +72,21 @@ class DataSet:
 
     def from_first(filename, min_index=None, max_index=None, **kwargs):
         """
-        Create a :class:`DataSet` for all files in a capture
-        
+        Create a :class:`DataSet` for all files in a capture. The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
+
         Parameters
         ----------
-        filename : str
-            name of a file in the capture
-        min_index : int, optional
-            Minimum cube index to use. Default: the lowest that was downloaded
-        max_index : int, optional
-            Maximum cube index to use. Default: the highest that was downloaded
-        
-        Parameters
-        -----------------
-        See :class:`DataSet` for keyword parameters
+        filenames : list of str
+            List of files to include
+
+        max_frames : int, optional
+            Maximum number of frames to iterate through. Default: all the frames
+        use_bar : bool, optional
+            Show a progress bar. Default: True.
+        cut_cr : bool, optional
+            Cut cosmic rays. Default: True
+        cr_thresh: int, optional
+            Cosmic ray cutting threshold. Default: 20
         """
         directory = os.path.dirname(filename)
         filename = os.path.basename(filename)
@@ -99,16 +109,20 @@ class DataSet:
     
     def from_dir(directory, **kwargs):
         """
-        Create a :class:`DataSet` for all files in a directory
-        
+        Create a :class:`DataSet` for all files in a directory. The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
+
         Parameters
         ----------
         directory : str
             name of the directory
-        
-        Keyword Arguments
-        -----------------
-        See :class:`DataSet`
+        max_frames : int, optional
+            Maximum number of frames to iterate through. Default: all the frames
+        use_bar : bool, optional
+            Show a progress bar. Default: True.
+        cut_cr : bool, optional
+            Cut cosmic rays. Default: True
+        cr_thresh: int, optional
+            Cosmic ray cutting threshold. Default: 20
         """
         if not os.path.exists(directory):
             raise Exception(f"The directory {directory} does not exist")
@@ -127,8 +141,8 @@ class DataSet:
         """
         Create an iterator for iterating through all frames in a :class:`DataSet`. 
 
-        Keyword Arguments
-        -----------------
+        Parameters
+        ----------
         The default keyword arguments are the ones you passed when you created the :class:`DataSet`.       
         You can override the defaults by passing new arguments here. You can also pass the following
 
@@ -136,6 +150,10 @@ class DataSet:
             Maximum number of frames to iterate through. Default: all the frames
         use_bar : bool, optional
             Show a progress bar. Default: True.
+        cut_cr : bool, optional
+            Cut cosmic rays. Default: True
+        cr_thresh: int, optional
+            Cosmic ray cutting threshold. Default: 20
 
         Notes
         -----

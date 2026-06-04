@@ -56,7 +56,8 @@ class BoxRegion(Region):
             line = f.readline()
             if not line.startswith("box("):
                 raise Exception("Box regions must start with box")
-            x, y, l, w, angle = line[4:-2].split(",")
+            if line.endswith('\n'): line = line[:-1]
+            x, y, l, w, angle = line[4:-1].split(",")
             if ":" in x:
                 raise Exception("Can only load `ciao` formatted region files in physical coordinates")
             self.x = float(x)
@@ -81,7 +82,8 @@ class PolygonRegion(Region):
             line = f.readline()
             if not line.startswith("polygon("):
                 raise Exception("Polygon regions must start with polygon")
-            points = line[8:-2].split(",")
+            if line.endswith('\n'): line = line[:-1]
+            points = line[8:-1].split(",")
             self.points = []
             for i in range(0, len(points), 2):
                 self.points.append((float(points[i]), float(points[i+1])))
@@ -131,7 +133,8 @@ class CircleRegion(Region):
             line = f.readline()
             if not line.startswith("circle("):
                 raise Exception("Circle regions must start with circle")
-            x, y, radius = line[7:-2].split(",")
+            if line.endswith('\n'): line = line[:-1]
+            x, y, radius = line[7:-1].split(",")
             self.x = float(x)
             self.y = float(y)
             self.radius2 = float(radius)**2

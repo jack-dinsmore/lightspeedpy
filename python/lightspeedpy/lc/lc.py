@@ -10,16 +10,16 @@ from multiprocessing import Pool
 MAX_N_SCALE = 2
 SMEAR_FRAME = True # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
 
-def make_psf_image(data_set, reg_file, sigma_arcsec):
-    xline = np.arange(data_set.image_shape[0])
-    yline = np.arange(data_set.image_shape[1])
-    xs, ys = np.meshgrid(xline, yline, indexing="ij")
+def make_psf_image(data_set, reg_file, fwhm_arcsec):
+    xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     region = Region.load(reg_file)
     region_mask = region.check_inside_absolute(xs, ys)
     center = (np.argmax(np.sum(region_mask, axis=0)), np.argmax(np.sum(region_mask, axis=1)))
 
+    sigma_arcsec = fwhm_arcsec / 2.34
     sigma_pixels = sigma_arcsec / PIXEL_SIZE
-    image = np.exp(-(xs - center[0])**2 + (ys - center[1])**2 / (2*sigma_pixels**2))
+    image = np.exp(-((xs - center[0])**2 + (ys - center[1])**2) / (2*sigma_pixels**2))
+
     return image
 
 def delta_phase(phase_start, phase_end):
@@ -39,63 +39,57 @@ def get_bootstrap_instance(seed, data_set_orig, ephemeris, args, image):
         lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
     return lc
 
-def get_lc_no_errors(args):
+def get_lc(args):
     data_set = get_dataset(args)
     print("Load files")
     data_set.display_filenames()
     ephemeris = Ephemeris(args.eph, data_set, args.observatory)
 
-    image = None
-    if args.mode == "weight" and args.psf is not None:
-        image = make_psf_image(data_set, args.reg, args.psf)
-    
-    if args.mode == "sum":
-        lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
-    elif args.mode == "clip":
-        lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
-    elif args.mode == "weight":
-        lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
+    if args.errors is None:
+        image = None
+        if args.mode == "weight" and args.psf is not None:
+            image = make_psf_image(data_set, args.roi, args.psf)
+        
+        if args.mode == "sum":
+            lc = get_summed_lc(data_set, args.bins, args.roi, ephemeris)
+        elif args.mode == "clip":
+            lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
+        elif args.mode == "weight":
+            lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
+
+    else:
+        N_LCS = 16
+        image = None
+        if args.mode == "weight" and args.psf is not None:
+            image = make_psf_image(data_set, args.roi, args.psf)
+        
+        params = []
+        for _ in range(N_LCS):
+            params.append([np.random.randint(2**32), data_set, ephemeris, args, image])
+        
+        with Pool() as pool:
+            lcs = pool.starmap(get_bootstrap_instance, params)
+        
+        lc_m0 = np.zeros_like(lcs[0].flux)
+        lc_m1 = np.zeros_like(lcs[0].flux)
+        lc_m2 = np.zeros_like(lcs[0].flux)
+        for lc in lcs:
+            lc_m0 += lc.exposures
+            lc_m1 += lc.flux * lc.exposures
+            lc_m2 += lc.flux * lc.flux * lc.exposures
+        lc_m1 /= lc_m0
+        lc_m2 /= lc_m0
+        lc_std = np.sqrt(lc_m2 - lc_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
+
+        main_lc = lcs[0]
+        main_lc.exposures = lc_m0 / N_LCS
+        main_lc.flux = lc_m1 * main_lc.exposures
+        main_lc.errors = lc_std * main_lc.exposures
+        lc = main_lc
 
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
     lc.save(args.output, args.clobber, save_kwargs)
-
-def get_lc_errors(args):
-    data_set = get_dataset(args)
-    print("Load files")
-    data_set.display_filenames()
-    ephemeris = Ephemeris(args.eph, data_set, args.observatory)
-    N_LCS = 16
-    image = None
-    if args.mode == "weight" and args.psf is not None:
-        image = make_psf_image(data_set, args.reg, args.psf)
-    
-    params = []
-    for _ in range(N_LCS):
-        params.append([np.random.randint(2**32), data_set, ephemeris, args, image])
-    
-    with Pool() as pool:
-        lcs = pool.starmap(get_bootstrap_instance, params)
-    
-    lc_m0 = np.zeros_like(lcs[0].flux)
-    lc_m1 = np.zeros_like(lcs[0].flux)
-    lc_m2 = np.zeros_like(lcs[0].flux)
-    for lc in lcs:
-        lc_m0 += lc.exposures
-        lc_m1 += lc.flux * lc.exposures
-        lc_m2 += lc.flux * lc.flux * lc.exposures
-    lc_m1 /= lc_m0
-    lc_m2 /= lc_m0
-    lc_std = np.sqrt(lc_m2 - lc_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
-
-    main_lc = lcs[0]
-    main_lc.exposures = lc_m0 / N_LCS
-    main_lc.flux = lc_m1 * main_lc.exposures
-    main_lc.errors = lc_std * main_lc.exposures
-
-    save_kwargs = vars(args)
-    if "func" in save_kwargs: del save_kwargs["func"]
-    main_lc.save(args.output, args.clobber, save_kwargs)
 
 def add_lc(args):
     lc = None
@@ -123,7 +117,7 @@ class Lightcurve:
         self.header0 = header0
         self.header1 = header1
 
-    def from_data_set(self, data_set, edges, flux, exposures, eph):
+    def from_data_set(data_set, edges, flux, exposures, eph):
         """
         Create a light curve object from a data set
 
@@ -145,9 +139,9 @@ class Lightcurve:
         for frame in data_set.iterator(use_bar=False):
             duration = frame.duration
             break
-        return Lightcurve.from_data_set(edges, flux, exposures, eph.nu, data_set.header0, data_set.header1, duration)
+        return Lightcurve(edges, flux, exposures, eph.nu, data_set.header0, data_set.header1, duration)
 
-    def load(self, filename):
+    def load(filename):
         with fits.open(filename) as hdul:
             header0 = hdul[0].header
             header1 = hdul[1].header
@@ -158,10 +152,17 @@ class Lightcurve:
             exposures = np.array(hdul[1].data["EXPOSURE"])
             duration = hdul[1].header["DURATION"]
             nu = hdul[1].header["NU"]
-        return Lightcurve.from_data_set(edges, flux, exposures, nu, header0, header1, duration, errors)
+        return Lightcurve(edges, flux, exposures, nu, header0, header1, duration, errors)
     
     def __iadd__(self, other):
-        print("A")
+        if len(self.edges) != len(other.edges) or np.any(self.edges != other.edges):
+            raise Exception("Cannot add light curves with different edges")
+        self.flux += other.flux
+        self.exposures += other.exposures
+        self.errors = np.sqrt(self.errors**2 + other.errors**2)
+        if self.duration != other.duration:
+            self.duration = 0
+        return self
 
     def save(self, filename, clobber=False, save_kwargs=None):
         """
@@ -187,7 +188,7 @@ class Lightcurve:
 
         hdu.header["EXPTIME"] = np.sum(self.exposures)
         hdu.header["DURATION"] = self.duration
-        hdu.header["NU"] = self.ephemeris.nu
+        hdu.header["NU"] = self.nu
 
         if "GPSSTART" in self.header0:
             hdu.header["GPSSTART"] = self.header0["GPSSTART"]
@@ -261,7 +262,6 @@ def get_summed_lc(data_set, n_bins, reg_file, ephemeris):
     Lightcurve
         The light curve object, corrected for quantum efficiency TODO
     """
-    # Does not use the image
     electrons = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
     roi = Region.load(reg_file)
@@ -285,7 +285,7 @@ def get_summed_lc(data_set, n_bins, reg_file, ephemeris):
         exposures += frame.duration*weights
 
     fluxes = electrons / exposures # Counts per second
-    return Lightcurve.from_data_set(phase_edges, fluxes, exposures, ephemeris, data_set)
+    return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)
 
 def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
     """
@@ -307,7 +307,6 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
     Lightcurve
         The light curve object, corrected for quantum efficiency TODO
     """
-    # Does not use the image
     electrons = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
     roi = Region.load(reg_file)
@@ -317,13 +316,12 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
 
     for frame in data_set:
         masked_image = np.round(frame.image[roi_mask])
-        # masked_image[masked_image >= 2] = 0 # TODO
         counts = np.nanmean(masked_image) * np.sum(roi_mask)
 
         if SMEAR_FRAME:
             start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
             end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
-            weights = get_bin_weights(phase_edges, start_phase, end_phase) # TODO
+            weights = get_bin_weights(phase_edges, start_phase, end_phase)
         else:
             phase = ephemeris.get_phase(frame.timestamp)
             weights = np.zeros(n_bins)
@@ -332,8 +330,8 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
         electrons += counts*weights
         exposures += frame.duration*weights
 
-    fluxes = electrons / exposures # Counts per bin
-    return Lightcurve.from_data_set(phase_edges, fluxes, exposures, ephemeris, data_set)
+    fluxes = electrons / exposures # Counts per second
+    return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)
 
 def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     """
@@ -357,7 +355,6 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     Lightcurve
         The light curve object, corrected for quantum efficiency TODO
     """
-    # Does not use the image
     numer = np.zeros(n_bins)
     denom = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
@@ -368,7 +365,7 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
 
     if image is None:
         image = np.ones(data_set.image_shape)
-    image /= np.sum(image)# ???
+    image /= np.sum(image)
 
     for frame in data_set:
         if SMEAR_FRAME:
@@ -389,9 +386,8 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
 
         numer += weights*np.sum((odds - 1) * image[good_mask])
         denom += weights*np.sum((odds * image[good_mask])**2)
-        # TODO put PSF weighting back in, using the `image` variable`.
 
         exposures += frame.duration*weights
 
     fluxes = numer / denom # TODO normalization may be wrong
-    return Lightcurve.from_data_set(phase_edges, fluxes, exposures, ephemeris, data_set)
+    return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

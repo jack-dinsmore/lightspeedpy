@@ -18,13 +18,18 @@ def get_dataset(args):
     
     min_index = None if args.min_index is None else int(args.min_index)
     max_index = None if args.max_index is None else int(args.max_index)
-    data_set = DataSet.from_first(args.input, min_index=min_index, max_index=max_index)
+    kwargs = {}
+    if args.allow_cr:
+        kwargs["cut_cr"] = False
+    data_set = DataSet.from_first(args.input, min_index=min_index, max_index=max_index, **kwargs)
     data_set.apply_timing_offset(args.timing_offset)
 
     print("Loaded files")
     data_set.display_filenames()
     if not args.self_bias and not args.bias:
         print("WARNING: No bias provided")
+
+
 
     def set_bias(ds):
         if args.bias is not None:
@@ -75,10 +80,11 @@ def add_dataset_args(parser):
     parser.add_argument("--input", required=True, help="File name of dataset")
     parser.add_argument("--output", required=True, help="File name of output image")
     parser.add_argument("--bias", help="File name of bias")
-    parser.add_argument("--self-bias", help="Measure bias from self", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--self-bias", help="Set to measure bias from self", action=argparse.BooleanOptionalAction)
     parser.add_argument("--dark", help="File name of dark")
     parser.add_argument("--flat", help="File name of flat")
     parser.add_argument("--min-index", help="Minimum cube index")
     parser.add_argument("--max-index", help="Maximum cube index")
     parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--allow_cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)

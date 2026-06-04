@@ -188,7 +188,6 @@ class PixelProperties:
         m1 /= n_frames
         m2 /= n_frames
         counts = counts[:,1:-1]
-        print(source_data_set.image_shape)
 
         bias = m1
         widths = np.sqrt(m2 - m1**2)

@@ -1,6 +1,8 @@
 import argparse
+from ..cli import add_dataset_args
 from .split import split
 from .stack import stack_bias
+from .cube import cube
 
 def main():
     parser = argparse.ArgumentParser(prog="lightspeedpy.cube", description="Manipulate lightspeed cubes")
@@ -19,6 +21,10 @@ def main():
     parser_stack_bias.add_argument("--max-index", help="Maximum cube index")
     parser_stack_bias.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser_stack_bias.set_defaults(func=stack_bias)
+
+    parser_cube = subparsers.add_parser('cube', help='Create a data cube')
+    add_dataset_args(parser_cube)
+    parser_cube.set_defaults(func=cube)
 
     args = parser.parse_args()
     args.func(args)

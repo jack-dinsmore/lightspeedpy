@@ -1,5 +1,6 @@
 import numpy as np
 from ..image.image import Image
+from ..qe import get_qe
 import copy
 
 def get_range(s):
@@ -110,29 +111,34 @@ def get_weighted_on_off_linearized(data_set, ephemeris, phase_string):
     off_numer = np.zeros(data_set.image_shape)
     off_denom = np.zeros(data_set.image_shape)
     off_n_frames = np.zeros(data_set.image_shape, int)
+    qe = get_qe()
+    frame_duration = None
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
         masked_image = frame.image[good_mask]
-        p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask)
-        p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask)
-        odds = p1/p0
+        p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask) * qe(0)
+        p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask) * qe(1)
+        p2 = data_set.pixel_properties.get_prob(masked_image, 2, mask=good_mask) * qe(2)
+        odds1 = p1/p0
+        odds2 = p2/p0
         phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
         if contains_phase(on_range, phase):
-            on_numer[good_mask] += odds - 1
-            on_denom[good_mask] += odds**2
+            on_numer[good_mask] += odds1 - 1
+            on_denom[good_mask] += odds1**2 - odds2
             on_n_frames[good_mask] += 1
         if contains_phase(off_range, phase):
-            off_numer[good_mask] += odds - 1
-            off_denom[good_mask] += odds**2
+            off_numer[good_mask] += odds1 - 1
+            off_denom[good_mask] += odds1**2 - odds2
             off_n_frames[good_mask] += 1
+        frame_duration = frame.duration
 
     on_image = on_numer/on_denom
-    on_image *= on_n_frames
+    on_image *= frame_duration
     off_image = off_numer/off_denom
-    off_image *= off_n_frames
+    off_image *= frame_duration
 
-    on = Image(on_image, data_set, on_n_frames)
-    off = Image(off_image, data_set, off_n_frames)
+    on = Image(on_image, data_set, on_n_frames, correct_qe=False)
+    off = Image(off_image, data_set, off_n_frames, correct_qe=False)
     image = copy.deepcopy(on)
     image.photons_per_second -= off.photons_per_second
 

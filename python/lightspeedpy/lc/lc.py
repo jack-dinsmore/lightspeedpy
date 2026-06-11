@@ -1,11 +1,14 @@
 import numpy as np
 from astropy.io import fits
+from scipy.special import factorial
+import copy
+from multiprocessing import Pool
 from ..cli import get_dataset
 from ..regions import Region
 from ..ephemeris import Ephemeris
-import copy
-from ..constants import PIXEL_SIZE
-from multiprocessing import Pool
+from ..qe import get_qe
+from ..util import EnormousArray
+from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
 
 MAX_N_SCALE = 2
 SMEAR_FRAME = True # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
@@ -36,7 +39,7 @@ def get_bootstrap_instance(seed, data_set_orig, ephemeris, args, image):
     elif args.mode == "clip":
         lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
     elif args.mode == "weight":
-        lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
+        lc = get_weighted_lc(data_set, image, args.bins, args.roi, ephemeris)
     return lc
 
 def get_lc(args):
@@ -55,7 +58,7 @@ def get_lc(args):
         elif args.mode == "clip":
             lc = get_clipped_lc(data_set, args.bins, args.roi, ephemeris)
         elif args.mode == "weight":
-            lc = get_weighted_lc_linearized(data_set, image, args.bins, args.roi, ephemeris)
+            lc = get_weighted_lc(data_set, image, args.bins, args.roi, ephemeris)
 
     else:
         N_LCS = 16
@@ -157,9 +160,12 @@ class Lightcurve:
     def __iadd__(self, other):
         if len(self.edges) != len(other.edges) or np.any(self.edges != other.edges):
             raise Exception("Cannot add light curves with different edges")
-        self.flux += other.flux
+        self_weight = self.exposures / (self.exposures + other.exposures)
+        other_weight = other.exposures / (self.exposures + other.exposures)
         self.exposures += other.exposures
-        self.errors = np.sqrt(self.errors**2 + other.errors**2)
+        self.flux = self.flux * self_weight + other.flux * other_weight
+        self.flux = self.flux * self_weight + other.flux * other_weight
+        self.errors = np.sqrt(self.errors**2 * self_weight**2 + other.errors**2 * other_weight**2)
         if self.duration != other.duration:
             self.duration = 0
         return self
@@ -194,9 +200,9 @@ class Lightcurve:
             hdu.header["GPSSTART"] = self.header0["GPSSTART"]
 
         for key, value in self.header1.items():
-            if key.startswith("HIERARCH") or key.startswith("TEL") or key in ["FILTER", "SHUTTER", "SLIT", "HALPHA", "POLSTAGE", "AIRMASS", "DATEOBS", "TELUT"]:
-                if len(key) > 8: key = f"HIERARCH {key}"
-                hdu.header[key] = value
+            if key in FORBIDDEN_KEYWORDS: continue
+            if len(key) > 8: key = f"HIERARCH {key}"
+            hdu.header[key] = value
 
         if save_kwargs is not None:
             for key, value in save_kwargs.items():
@@ -333,7 +339,7 @@ def get_clipped_lc(data_set, n_bins, reg_file, ephemeris):
     fluxes = electrons / exposures # Counts per second
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)
 
-def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
+def get_weighted_lc(data_set, image, n_bins, reg_file, ephemeris):
     """
     Get the light curve of a source by summing all the detected photons per frame after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is << 1. This function can also do PSF-weighted photometry.
     
@@ -353,19 +359,23 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
     Returns
     -------
     Lightcurve
-        The light curve object, corrected for quantum efficiency TODO
+        The light curve object, corrected for quantum efficiency
     """
-    numer = np.zeros(n_bins)
-    denom = np.zeros(n_bins)
+
+    qe = get_qe()
     exposures = np.zeros(n_bins)
     roi = Region.load(reg_file)
     phase_edges = np.linspace(0, 1, n_bins+1)
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     roi_mask = roi.check_inside_absolute(xs, ys)
+    electrons = np.zeros(n_bins)
+
+    weights_list = EnormousArray(5_000_000)
+    probs_list = EnormousArray(5_000_000)
+    ns = np.arange(3)
 
     if image is None:
         image = np.ones(data_set.image_shape)
-    image /= np.sum(image)
 
     for frame in data_set:
         if SMEAR_FRAME:
@@ -379,15 +389,45 @@ def get_weighted_lc_linearized(data_set, image, n_bins, reg_file, ephemeris):
 
         good_mask = roi_mask & (~np.isnan(frame.image))
         masked_image = frame.image[good_mask]
+        psf_weights = image[good_mask]
+        psf_weights /= np.sum(psf_weights)
 
-        p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask)
-        p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask)
-        odds = p1/p0
-
-        numer += weights*np.sum((odds - 1) * image[good_mask])
-        denom += weights*np.sum((odds * image[good_mask])**2)
+        probs = np.array([data_set.pixel_properties.get_prob(masked_image, n, mask=good_mask) * qe(n) / factorial(n) for n in ns])
+        counts = np.nanmean(masked_image) * np.sum(roi_mask)
+        electrons += counts*weights
 
         exposures += frame.duration*weights
+        for pixel_index in range(len(psf_weights)):
+            weights_list.append(weights * psf_weights[pixel_index] * frame.duration)
+            probs_list.append(probs[:,pixel_index])
 
-    fluxes = numer / denom # TODO normalization may be wrong
+    fluxes = electrons / exposures / qe(0) # Counts per second
+
+    # Perform the iterations
+    fractional_shift = 1
+    for iteration in range(10):
+        gradient = np.zeros(len(fluxes))
+        hessian = np.zeros((len(fluxes), len(fluxes)))
+        for chunk_weights, chunk_probs in zip(weights_list, probs_list):
+            # chunk_weights has shape a,i. chunk_probs has shape a,n
+            lambdas = np.einsum("ai,i->a", chunk_weights, fluxes)
+            sum_d0 = np.zeros_like(lambdas)
+            sum_d1 = np.zeros_like(lambdas)
+            sum_d2 = np.zeros_like(lambdas)
+            for n in ns:
+                sum_d0 += chunk_probs[:,n] * lambdas**n
+                if n >= 1:
+                    sum_d1 += chunk_probs[:,n] * lambdas**(n-1) * n
+                if n >= 2:
+                    sum_d2 += chunk_probs[:,n] * lambdas**(n-2) * n * (n-1)
+            
+            gradient += np.einsum("ai,a->i", chunk_weights, sum_d1 / sum_d0 - 1)
+            hessian += np.einsum("ai,aj,a->ij", chunk_weights, chunk_weights, (sum_d0*sum_d2 - sum_d1**2) / sum_d0**2)
+        shift = -np.linalg.inv(hessian) @ gradient
+        fluxes += shift
+        
+        fractional_shift = np.sqrt(np.mean(shift**2)) / np.abs(np.mean(fluxes))
+        print(f"Iteration {iteration+1}: fractional shift of {fractional_shift*100:.2f}%")
+        if fractional_shift < 0.01: break
+
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

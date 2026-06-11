@@ -87,4 +87,4 @@ def add_dataset_args(parser):
     parser.add_argument("--max-index", help="Maximum cube index")
     parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--allow_cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--allow-cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)

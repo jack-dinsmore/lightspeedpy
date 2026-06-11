@@ -99,6 +99,7 @@ class PixelProperties:
         The probability for each pixel to have originated from the given true source count.
         """
 
+
         if mask is None:
             denom = 1 / (2*self.params[:,0]**2)
             pdf = np.exp(-(image-self.params[:,1] - true_n)**2 * denom) * self.params[:,2]
@@ -112,7 +113,7 @@ class PixelProperties:
             pdf += np.exp(-(image-self.params[mask,1]+self.params[mask,5] - true_n)**2 * denom) * self.params[mask,6]
             pdf /= np.sqrt(2*np.pi*self.params[mask,0]**2)
 
-        return pdf + 0.01
+        return pdf
 
     def default(data_set):
         """
@@ -125,44 +126,6 @@ class PixelProperties:
             data_set,
             data_set
         )
-
-    def from_data(source_data_set, dest_data_set):
-        """
-        Get the pixel properties of a faint, rapid readout data set
-        """
-        raise Exception("Deprecated")
-        # print("Loading pixel properties from data is deprecated.")
-        # m1 = np.zeros(source_data_set.image_shape)
-        # m2 = np.zeros(source_data_set.image_shape)
-        # n_frames = np.zeros(source_data_set.image_shape)
-        
-        # for frame in source_data_set.iterator(max_frames=10_000):
-        #     good_mask = ~np.isnan(frame.image)
-        #     masked_image = (frame.image - np.floor(frame.image + 0.5))[good_mask]
-        #     m1[good_mask] += masked_image
-        #     m2[good_mask] += masked_image**2
-        #     n_frames[good_mask] += 1
-        # m1 /= n_frames
-        # m2 /= n_frames
-
-        # output = GRID_INTERPOLATOR((m1, m2))
-        # m1 = output[:,:,0]
-        # m2 = output[:,:,1]
-
-        # bias = m1
-        # widths = np.sqrt(m2 - m1**2)
-
-        # skews = np.ones_like(bias)
-        # skews[widths < 0.2] = 0.23
-        # skews[(0.2 <= widths) & (widths < 0.22)] = 0.23
-        # skews[(0.22 <= widths) & (widths < 0.233)] = 0.25
-        # skews[(0.233 <= widths) & (widths < 0.25)] = 0.31
-        # skews[(0.25 <= widths) & (widths < 0.27)] = 0.41
-        # skews[(0.27 <= widths) & (widths < 0.31)] = 0.56
-        # skews[(0.31 <= widths) & (widths < 0.38)] = 0.66
-        # skews[(0.38 <= widths)] = 0.61
-
-        # return PixelProperties(bias, widths, skews, source_data_set, dest_data_set)
 
     def from_bias(source_data_set, dest_data_set, max_frames=10_000, use_pool=True):
         """
@@ -203,23 +166,6 @@ class PixelProperties:
             for arg in tqdm.tqdm(args):
                 params.append(fit_gaussians(arg))
         params = np.array(params)
-
-        # for c, p in zip(counts, params):
-        #     import matplotlib.pyplot as plt
-        #     fig, ax = plt.subplots()
-        #     ax.scatter(centers, c / np.mean(c))
-
-        #     true_n = 0
-        #     denom = 1 / (2*p[0]**2)
-        #     pdf = np.exp(-(centers-p[1] - true_n)**2 * denom) * p[2]
-        #     pdf += np.exp(-(centers-p[1]-p[3] - true_n)**2 * denom) * p[4]
-        #     pdf += np.exp(-(centers-p[1]+p[5] - true_n)**2 * denom) * p[6]
-        #     pdf /= np.sqrt(2*np.pi*p[0]**2)
-
-        #     ax.plot(centers, pdf / np.mean(pdf))
-        #     fig.savefig("test.png")
-        #     import time
-        #     time.sleep(1)
 
         params = params.reshape((bias.shape[0], bias.shape[1], 7))
         return PixelProperties(bias, widths, params, source_data_set, dest_data_set)

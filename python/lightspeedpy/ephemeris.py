@@ -76,11 +76,11 @@ class EphemerisLibrary():
 
             if len(timestamps) != len(these_timestamps):
                 # The timestamps are not the same, meaning different files are being loaded with the same ephem
-                return None
+                continue
             max_delta = np.max(np.abs(timestamps - these_timestamps))
             if max_delta > 1e-8:
                 # The timestamps are not the same, meaning different files are being loaded with the same ephem
-                return None
+                continue
 
             return phases
         
@@ -146,7 +146,6 @@ class Ephemeris():
             delta_phase_int = phases.int - np.min(phases.int)
             self.phases = delta_phase_int.astype(np.float64) + phases.frac.astype(np.float64)
             library.push(self.model, self.timestamps, self.phases)
-            print("Finished calculating phases")
 
         else:
             self.phases = result

@@ -1,4 +1,6 @@
 import numpy as np
+import os
+TMP_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "tmp"))
 
 def trim_image(image, source_data_set, dest_data_set):
     my_vpos = int(dest_data_set.header1["HIERARCH SUBARRAY VPOS"]) if dest_data_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
@@ -46,3 +48,47 @@ def to_dms(d, arcsec_precision=None):
         return f"{sign}{d:02d}:{m:02d}:{s:.{arcsec_precision}f}"
     else:
         return f"{sign}{d:02d}:{m:02d}:{s}"
+    
+class EnormousArray:
+    def __init__(self, max_data_len=None):
+        self.filenames = []
+        self.data = []
+        self.max_data_len = max_data_len
+        if not os.path.exists(TMP_LOCATION):
+            os.mkdir(TMP_LOCATION)
+    
+    def append(self, line):
+        self.data.append(line)
+        if self.max_data_len is None:
+            self.max_data_len = int(1e9 / np.array(line).nbytes)
+        if len(self.data) > self.max_data_len:
+            self.finish()
+    
+    def finish(self):
+        if len(self.data) == 0: return
+        filename = None
+        while filename is None or os.path.exists(filename):
+            filename = f"{TMP_LOCATION}/tmp-{np.random.randint(2**24)}.npy"
+        np.save(filename, self.data)
+        self.filenames.append(filename)
+        self.data = []
+
+    def __iter__(self):
+        self.finish()
+        return EnormousArrayIterator(self.filenames)
+    
+    def __del__(self):
+        for filename in self.filenames:
+            os.remove(filename)
+
+class EnormousArrayIterator:
+    def __init__(self, filenames):
+        self.filenames = filenames
+        self.index = 0
+
+    def __next__(self):
+        if self.index >= len(self.filenames):
+            raise StopIteration
+        data = np.load(self.filenames[self.index])
+        self.index += 1
+        return data

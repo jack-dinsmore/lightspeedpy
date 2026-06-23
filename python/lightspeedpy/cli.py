@@ -29,8 +29,6 @@ def get_dataset(args):
     if not args.self_bias and not args.bias:
         print("WARNING: No bias provided")
 
-
-
     def set_bias(ds):
         if args.bias is not None:
             is_pix_prop = False
@@ -77,7 +75,7 @@ def add_dataset_args(parser):
     parser : argparse parser
         Parser to which to add arguments
     """
-    parser.add_argument("--input", required=True, help="File name of dataset")
+    parser.add_argument("--input", required=True, help="Name of the cube001 file")
     parser.add_argument("--output", required=True, help="File name of output image")
     parser.add_argument("--bias", help="File name of bias")
     parser.add_argument("--self-bias", help="Set to measure bias from self", action=argparse.BooleanOptionalAction)

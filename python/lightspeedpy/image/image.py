@@ -4,7 +4,7 @@ from scipy.ndimage import rotate
 import copy
 from astropy.io import fits
 from astropy.wcs import WCS
-from ..qe import get_qe
+from ..qe import QuantumEfficiency
 from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
 from ..util import from_hms, from_dms
 from ..weight import Weighter
@@ -29,6 +29,7 @@ class Image:
     def __init__(self, image, data_set, n_frames, offset=None, correct_qe=True):
         self.header0 = data_set.header0
         self.header1 = data_set.header1
+        qe = QuantumEfficiency()
         for frame in data_set.iterator(use_bar=False):
             self.frame_duration = frame.duration
             break
@@ -37,10 +38,9 @@ class Image:
         else:
             self.n_frames = n_frames
 
-        qe = get_qe()
         electrons_per_frame = image / self.n_frames
         if correct_qe:
-            photons_per_frame = electrons_per_frame / qe(electrons_per_frame)
+            photons_per_frame = qe.get_inverse(electrons_per_frame)
         else:
             photons_per_frame = electrons_per_frame
         self.photons_per_second = photons_per_frame / self.frame_duration
@@ -169,7 +169,7 @@ def make_image(data_set, method):
 
     Returns
     -------
-    array-like
+    Image
         The image, crrected for flat and quantum efficiency
     """
     image = np.zeros(data_set.image_shape)

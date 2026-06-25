@@ -1,6 +1,6 @@
 import argparse
 from ..cli import add_dataset_args, get_dataset
-from .image import *
+from .image import make_image
 
 def get_image(args):
     data_set = get_dataset(args)

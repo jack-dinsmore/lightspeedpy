@@ -4,7 +4,7 @@ from astropy.io import fits
 from astropy.time import Time
 from .frame import DataSetIteratorRet
 from .pixel_properties import PixelProperties
-from .qe import get_qe
+from .qe import QuantumEfficiency
 
 DEFAULT_TIME = "2025-09-13 06:00:00.00429"
 
@@ -63,7 +63,9 @@ class DataSet:
                 if not is_header_equal(self.header0, hdul[0].header) or not is_header_equal(self.header1, hdul[1].header):
                     raise Exception(f"File {filename} had a different header. Lightspeedpy does not currently support this.")
         self.frames = np.array(self.frames)
-                
+        
+        self._pixel_properties = None
+        self.bias = None
         self.dark = None
         self.flat = None
         self.noises = None
@@ -166,6 +168,10 @@ class DataSet:
 
     def __iter__(self):
         return self.iterator().__iter__()
+    
+    def get_duration(self):
+        for frame in self:
+            return frame.duration
 
     def display_filenames(self):
         """
@@ -281,14 +287,27 @@ class DataSet:
             timestamps = np.concatenate([timestamps, these_timestamps])
         return timestamps
     
-    @property
-    def pixel_properties(self):
+    def get_pixel_properties(self, noise_distro):
         """
+        Get the pixel properties of the detector
+
+        Parameters
+        ----------
+        noise_distro : bool
+            Set to True if the pixel properties should map the noise distribution of each pixel. This will take more time.
+
         PixelProperties
             Pixel properties of the data set
         """
-        if not hasattr(self, "_pixel_properties"):
-            self._pixel_properties = PixelProperties.default(self)
+        if self._pixel_properties is None or (noise_distro and not self._pixel_properties.has_noise_distro()):
+            # Generate the pixel properties
+            if self.bias is None:
+                if self._pixel_properties is None:
+                    self._pixel_properties = PixelProperties.default(self)
+                else:
+                    raise Exception("The bias you passed did not calculate the noise distribution, but the analysis method you requested requires it")
+            else:
+                self._pixel_properties = PixelProperties.from_bias(self.bias, self, noise_distro)
         return self._pixel_properties
     
     def set_bias(self, bias):
@@ -303,17 +322,16 @@ class DataSet:
         if type(bias) is DataSet:
             if hasattr(self, "_pixel_properties"):
                 raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
-            if not hasattr(bias, "_pixel_properties"):
-                bias._pixel_properties = PixelProperties.from_bias(bias, self)
-            self._pixel_properties = copy.deepcopy(bias.pixel_properties)
+            self.bias = bias
         else:
             self._pixel_properties = bias
+            self.bias = None
 
     def set_self_bias(self):
         """
         Estimate an observation from these data. This can only be done accurately for very fast readout of a faint source, where most of the pixels detect zero photons.
         """
-        self._pixel_properties = PixelProperties.from_data(self, self)
+        self.bias = self
 
     def set_dark(self, dark_data_set):
         """
@@ -336,5 +354,5 @@ class DataSet:
             A :class:`DataSet` containing the flat observation
         """
         self.flat = flat_data_set.stack()
-        self.flat /= get_qe()(self.flat)
+        self.flat /= QuantumEfficiency()(self.flat)
         self.flat /= np.nanmax(self.flat)

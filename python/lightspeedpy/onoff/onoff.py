@@ -116,9 +116,9 @@ def get_weighted_on_off_linearized(data_set, ephemeris, phase_string):
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
         masked_image = frame.image[good_mask]
-        p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask) * qe(0)
-        p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask) * qe(1)
-        p2 = data_set.pixel_properties.get_prob(masked_image, 2, mask=good_mask) * qe(2)
+        p0 = data_set.get_pixel_properties(True).get_prob(masked_image, 0, mask=good_mask) * qe(0)
+        p1 = data_set.get_pixel_properties(True).get_prob(masked_image, 1, mask=good_mask) * qe(1)
+        p2 = data_set.get_pixel_properties(True).get_prob(masked_image, 2, mask=good_mask) * qe(2)
         odds1 = p1/p0
         odds2 = p2/p0
         phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)

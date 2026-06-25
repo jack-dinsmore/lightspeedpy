@@ -48,5 +48,5 @@ def get_dataset(args):
 
 def stack_bias(args):
     data_set = get_dataset(args)
-    pp = PixelProperties.from_bias(data_set, data_set)
+    pp = PixelProperties.from_bias(data_set, data_set, args.map_noise)
     pp.save(args.output, args.clobber)

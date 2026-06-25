@@ -78,7 +78,7 @@ class DataSetIterator:
         image = image.astype(float)
         image -= 199.5
         image /= ADU_PER_ELECTRON
-        image -= self.data_set.pixel_properties.bias
+        image -= self.data_set.get_pixel_properties(False).bias
         if self.data_set.dark is not None:
             image -= self.data_set.dark * self.data_set.seconds_per_frame
         if self.cut_cr:

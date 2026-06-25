@@ -50,6 +50,13 @@ def to_dms(d, arcsec_precision=None):
         return f"{sign}{d:02d}:{m:02d}:{s}"
     
 class EnormousArray:
+    """A container that saves data to disk so it can store many gigabytes efficiently. To access the data, loop through the array as an iterator. Chunks of data will be stored each iteration. Only numpy arrays can be stored.s
+
+    Parameters
+    ----------
+    max_data_len: int (optional)
+        Number of elements to store per chunk. If None, 1 gigabyte will be allocated per chunk.
+    """
     def __init__(self, max_data_len=None):
         self.filenames = []
         self.data = []

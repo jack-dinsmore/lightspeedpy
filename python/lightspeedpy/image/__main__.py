@@ -5,14 +5,7 @@ from .image import *
 def get_image(args):
     data_set = get_dataset(args)
 
-    if args.mode == "sum":
-        image = get_summed_image(data_set)
-    elif args.mode == "clip":
-        image = get_clipped_image(data_set)
-    elif args.mode == "weight":
-        image = get_weighted_image_linearized(data_set)
-    else:
-        raise Exception("Not reachable")
+    image = make_image(data_set, args.mode)
 
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
@@ -20,7 +13,6 @@ def get_image(args):
     if args.smooth is not None:
         image.smooth(float(args.smooth))
     image.save(args.output, args.wcs, args.clobber, save_kwargs)
-
 
 def main():
     parser = argparse.ArgumentParser(prog="lightspeedpy.image", description="Lightspeed processing CLI for image extraction")

@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--eph", required=True, help="Ephemeris file")
     parser.add_argument("--observatory", help="Observatory (Default: Las Campanas Observatory)", default="Las Campanas Observatory")
     parser.add_argument("--bins", required=True, help="Number of bins", type=int)
-    parser.add_argument("--psf", type=float, help="Radius of the PSF, in arcseconds")
+    parser.add_argument("--psf", type=float, help="Set to perform PSF weighting. The ROI will be interpreted as a FWHM contour. It must be an ellipse or circle", action=argparse.BooleanOptionalAction)
     parser.add_argument("--errors", help="Set to estimate bootstrapped errors", action=argparse.BooleanOptionalAction)
     parser.add_argument('--mode',
                     default='sum',

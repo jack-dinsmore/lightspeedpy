@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.special import factorial
 from scipy.ndimage import convolve
 from scipy.ndimage import rotate
 import copy
@@ -8,6 +7,7 @@ from astropy.wcs import WCS
 from ..qe import get_qe
 from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
 from ..util import from_hms, from_dms
+from ..weight import Weighter
 
 FLAT_NAN_THRESHOLD = 0.1
 
@@ -49,7 +49,7 @@ class Image:
             self.photons_per_second /= data_set.flat
             self.photons_per_second[data_set.flat < FLAT_NAN_THRESHOLD] = np.nan
             self.flat_corrected = True
-        self.pixel_properties = copy.deepcopy(data_set.pixel_properties)
+        self.pixel_properties = copy.deepcopy(data_set.get_pixel_properties(False))
 
         self.rot_angle = float(data_set.header1["TELPA"]) + float(data_set.header1["ROTENC"]) # deg
         pixscale = PIXEL_SIZE / 3600
@@ -84,7 +84,7 @@ class Image:
 
         bad_mask = ~np.isfinite(self.photons_per_second)
         self.photons_per_second[bad_mask] = np.median(self.photons_per_second[~bad_mask])
-        weight_image = 1/self.pixel_properties.widths**2
+        weight_image = 1/self.get_pixel_properties(False).widths**2
         blurred_image = convolve(self.photons_per_second * weight_image, gauss)
         blurred_weights = convolve(weight_image, gauss)
         self.photons_per_second = blurred_image / blurred_weights
@@ -156,7 +156,7 @@ def load_image(image, assert_items=None):
                 assert(hdul[0].header[key] == assert_items[key])
         return np.array(hdul[0].data)
     
-def get_clipped_image(data_set):
+def make_image(data_set, method):
     """
     Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame, clipped to zero or 1.
     
@@ -164,6 +164,8 @@ def get_clipped_image(data_set):
     ----------
     data_set : DataSet
         The proto-Lightspeed data set
+    method : string
+        Either "sum", "clip", or "weight", specifying the method of image generation
 
     Returns
     -------
@@ -172,68 +174,22 @@ def get_clipped_image(data_set):
     """
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
-    for frame in data_set:
-        good_mask = ~np.isnan(frame.image)
-        image[good_mask] += np.round(frame.image[good_mask])
-        n_frames[good_mask] += 1
+    weighter = Weighter(data_set, one_to_one=True)
 
-    return Image(image, data_set, n_frames)
-
-def get_summed_image(data_set):
-    """
-    Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame.
-    
-    Parameters
-    ----------
-    data_set : DataSet
-        The proto-Lightspeed data set
-
-    Returns
-    -------
-    array-like
-        The image, crrected for flat and quantum efficiency
-    """
-    image = np.zeros(data_set.image_shape)
-    n_frames = np.zeros(data_set.image_shape)
-    for frame in data_set:
-        good_mask = ~np.isnan(frame.image)
-        image[good_mask] += frame.image[good_mask]
-        n_frames[good_mask] += 1
-
-    return Image(image, data_set, n_frames)
-
-def get_weighted_image_linearized(data_set):
-    """
-    Get a bias, dark, flat corrected image from a :class:`DataSet` after weighting by the probability of each being real. This function assumes that the true number of photons expected per pixel is << 1.
-    
-    Parameters
-    ----------
-    data_set : DataSet
-        The proto-Lightspeed data set
-
-    Returns
-    -------
-    array-like
-        The image, crrected for flat and quantum efficiency
-    """
-    numer = np.zeros(data_set.image_shape)
-    denom = np.zeros(data_set.image_shape)
-    n_frames = np.zeros(data_set.image_shape, int)
-    qe = get_qe()
-    frame_duration = None
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
         masked_image = frame.image[good_mask]
-        p0 = data_set.pixel_properties.get_prob(masked_image, 0, mask=good_mask) * qe(0)
-        p1 = data_set.pixel_properties.get_prob(masked_image, 1, mask=good_mask) * qe(1)
-        p2 = data_set.pixel_properties.get_prob(masked_image, 2, mask=good_mask) * qe(2)
-        odds1 = p1/p0
-        odds2 = p2/p0
-        numer[good_mask] += odds1 - 1
-        denom[good_mask] += odds1**2 - odds2
+        if method == "sum":
+            image[good_mask] += masked_image
+        elif method == "clip":
+            image[good_mask] += np.round(masked_image)
+        elif method == "weight":
+            weighter.add_pixels(masked_image, np.where(good_mask.reshape(-1))[0], good_mask)
+        else:
+            raise Exception(f"Unrecognized method {method}")
         n_frames[good_mask] += 1
-        frame_duration = frame.duration
 
-    image = numer / denom / frame_duration
-    return Image(image, data_set, n_frames, correct_qe=False)
-    
+    if method == "weight":
+        image = weighter.get_fluxes().reshape(data_set.image_shape)
+
+    return Image(image, data_set, n_frames)

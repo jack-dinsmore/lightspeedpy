@@ -10,7 +10,7 @@ GRID_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 
 class PixelProperties:
     """
-    Biases and noise of each pixel in the data set. Use :meth:`PixelProperties.from_data` or :meth:`PixelProperties.from_bias` to create it.
+    Biases and noise of each pixel in the data set. Use :meth:`PixelProperties.default` or :meth:`PixelProperties.from_bias` to create it.
     
     Attributes
     ----------
@@ -20,19 +20,19 @@ class PixelProperties:
         Noises in each pixel, defined as the standard deviation of the Gaussian error approximation.
     """
     def __init__(self, bias, widths, params, source_data_set, dest_data_set):
-        if bias is not None: # Cheat code so that I can construct an empty PixelProperties: set bias=None
-            if source_data_set is not None:
-                self.bias = trim_image(bias, source_data_set, dest_data_set)
-                self.widths = trim_image(widths, source_data_set, dest_data_set)
-                self.params = np.zeros((self.bias.shape[0], self.bias.shape[1], 7))
-                for i in range(params.shape[2]):
-                    self.params[:,:,i] = trim_image(params[:,:,i], source_data_set, dest_data_set=dest_data_set)
-                self.header0 = source_data_set.header0
-                self.header1 = source_data_set.header1
-            else:
-                self.bias = bias
-                self.widths = widths
-                self.params = params
+        if source_data_set is not None:
+            self.bias = trim_image(bias, source_data_set, dest_data_set)
+            self.widths = trim_image(widths, source_data_set, dest_data_set)
+            self.params = None
+            self.header0 = source_data_set.header0
+            self.header1 = source_data_set.header1
+        else:
+            self.bias = bias
+            self.widths = widths
+            self.params = params
+
+    def has_noise_distro(self):
+        return self.params is not None
 
     def save(self, filename, clobber):
         """
@@ -46,7 +46,8 @@ class PixelProperties:
         h0 = fits.PrimaryHDU()
         h1 = fits.ImageHDU(data=self.bias)
         h2 = fits.ImageHDU(data=self.widths)
-        h3 = fits.ImageHDU(data=self.params)
+        if self.params is not None:
+            h3 = fits.ImageHDU(data=self.params)
 
         for key, value in self.header0.items():
             if key not in FORBIDDEN_KEYWORDS:
@@ -58,14 +59,21 @@ class PixelProperties:
                 if len(key) > 8: key = f"HIERARCH {key}"
                 h1.header[key] = value
                 h2.header[key] = value
-                h3.header[key] = value
+                if self.params is not None:
+                    h3.header[key] = value
 
         h0.header["PIXPROP"] = "T"
         h1.header["PIXPROP"] = "T"
         h2.header["PIXPROP"] = "T"
-        h3.header["PIXPROP"] = "T"
+        if self.params is not None:
+            h3.header["PIXPROP"] = "T"
 
-        fits.HDUList([h0, h1, h2, h3]).writeto(filename, overwrite=clobber)
+        hdul = [h0, h1, h2]
+        if self.params is not None:
+            hdul.append(h3)
+
+
+        fits.HDUList(hdul).writeto(filename, overwrite=clobber)
 
     def load(filename):
         with fits.open(filename) as hdul:
@@ -74,7 +82,10 @@ class PixelProperties:
             
             bias = np.array(hdul[1].data)
             widths = np.array(hdul[2].data)
-            params = np.array(hdul[3].data)
+            if len(hdul) == 4:
+                params = np.array(hdul[3].data)
+            else:
+                params = None
             pp = PixelProperties(bias, widths, params, None, None)
             pp.header0 = hdul[0].header
             pp.header1 = hdul[1].header
@@ -99,7 +110,8 @@ class PixelProperties:
         The probability for each pixel to have originated from the given true source count.
         """
 
-
+        if self.params is None:
+            raise Exception("You cannot get a noise probability unless you first map the noise distribution")
         if mask is None:
             denom = 1 / (2*self.params[:,0]**2)
             pdf = np.exp(-(image-self.params[:,1] - true_n)**2 * denom) * self.params[:,2]
@@ -122,12 +134,12 @@ class PixelProperties:
         return PixelProperties(
             np.zeros(data_set.image_shape),
             np.ones(data_set.image_shape) * 0.3,
-            np.zeros((data_set.image_shape[0], data_set.image_shape[1], 6)),
+            None,
             data_set,
             data_set
         )
 
-    def from_bias(source_data_set, dest_data_set, max_frames=10_000, use_pool=True):
+    def from_bias(source_data_set, dest_data_set, map_noise, max_frames=10_000):
         """
         Get the pixel properties of a bias data set
         """
@@ -136,7 +148,7 @@ class PixelProperties:
         n_frames = np.zeros(source_data_set.image_shape)
         edges = np.arange(-2, 2, 1/ADU_PER_ELECTRON)
         n_pixels = np.prod(source_data_set.image_shape)
-        counts = np.zeros((n_pixels, len(edges)+1), int)
+        counts = np.zeros((len(edges)+1, n_pixels), int)
         arange = np.arange(n_pixels)
         
         # Get mean, stdev, and histograms
@@ -147,57 +159,90 @@ class PixelProperties:
             m2[good_mask] += masked_image**2
             n_frames[good_mask] += 1
             digits = np.digitize(frame.image.reshape(-1), edges)
-            counts[arange,digits] += 1
+            counts[digits, arange] += 1
         m1 /= n_frames
         m2 /= n_frames
-        counts = counts[:,1:-1]
+        counts = counts[1:-1,:]
 
         bias = m1
         widths = np.sqrt(m2 - m1**2)
 
         # Get fit parameters
-        centers = (edges[1:] + edges[:-1]) / 2
-        args = [(c, centers) for c in counts]
-        if use_pool:
-            with Pool() as pool:
-                params = list(tqdm.tqdm(pool.map(fit_gaussians, args), total=len(args)))
+        if map_noise:
+            params = fit_gaussians(edges, counts)
+            params = params.transpose().reshape((bias.shape[0], bias.shape[1], 7))
         else:
-            params = []
-            for arg in tqdm.tqdm(args):
-                params.append(fit_gaussians(arg))
-        params = np.array(params)
+            params = None
 
-        params = params.reshape((bias.shape[0], bias.shape[1], 7))
         return PixelProperties(bias, widths, params, source_data_set, dest_data_set)
     
-def fit_gaussians(args):
+def fit_gaussians(edges, counts):
     """
-    Fit a triple Gaussian to the series of data given by data_points, which should be (n, m) for m data points from n pixels.
+    Fit a triple Gaussian to a list of histograms.
 
-    Returns a list of parameters. sigma, mu1, amp1, mu2, amp2, ...
+    Parameters
+    ----------
+    edges : array-like 
+        Edges of the bins (shape (e,))
+    counts : array-like
+        Data (shape (e-1, p) for p pixels.)
+
+    Returns an array of parameters (7, p)
     """
-    return [0.4, 0., 0.9, 0.5, 0.05, 0.5, 0.05] # TODO short-circuited the Gaussian fitting
-    counts, centers = args
-    errors = np.sqrt(counts)
-    errors[errors==0] = np.inf
-    total_area  = np.sum(counts) * (centers[1]-centers[0]) 
-    def score(params):
-        denom = 1 / (2*params[0]**2)
-        norm = total_area / np.sqrt(2*np.pi*params[0]**2)
-        ys = np.exp(-(centers-params[1])**2 * denom) * params[2] * norm
-        ys += np.exp(-(centers-params[1]-params[3])**2 * denom) * params[4] * norm
-        ys += np.exp(-(centers-params[1]+params[5])**2 * denom) * params[6] * norm
-        return (ys - counts) / errors
-    # TODO jacobian
+    n_bins, n_pixels = counts.shape
+    centers = (edges[1:] + edges[:-1]) / 2
+    total_area  = np.sum(counts, axis=0) * (centers[1]-centers[0])
+    x0 = np.array([0.4, 0., 0.9, 0.5, 0.05, 0.5, 0.05])
+    params = np.repeat(x0[:, None], n_pixels, axis=1)
+    gradient = np.zeros((7, n_bins, n_pixels))
+    old_gradient = None
+    old_params = None
 
-    x0 = [0.4, 0., 0.9, 0.5, 0.05, 0.5, 0.05]
-    bounds = np.array([(0.02, 1.5),
-        (-2, 2), (0., 10),
-        (0.05, 1), (0, 0.2),
-        (0.05, 1), (0, 0.2)
-    ]).transpose()
-    result = least_squares(score, x0, bounds=bounds)
-    params = result.x
+    print("Calculating noise distribution")
+    for iteration in tqdm.tqdm(range(100), colour='red'):
+        x01 = np.subtract.outer(centers, params[1])/params[0] # Shape e-1, p
+        x02 = x01 - params[3]/params[0]
+        x03 = x01 + params[5]/params[0]
+        gauss_1 = np.exp(-x01**2 / 2) * params[2] * total_area
+        gauss_2 = np.exp(-x02**2 / 2) * params[4] * total_area
+        gauss_3 = np.exp(-x03**2 / 2) * params[6] * total_area
+        model = gauss_1 + gauss_2 + gauss_3
+        gradient[0,:,:] = (gauss_1*x01**2 + gauss_2*x02**2 + gauss_3*x03**2) / params[0]
+        gradient[1,:,:] = (gauss_1*x01 + gauss_2*x02 + gauss_3*x03) / params[0]
+        gradient[2,:,:] = gauss_1 / params[2]
+        gradient[3,:,:] = gauss_2 * x02 / params[0]
+        gradient[4,:,:] = gauss_2 / params[4]
+        gradient[5,:,:] = -gauss_3 * x02 / params[0]
+        gradient[6,:,:] = gauss_3 / params[6]
+        gradient *= 2 * (1 - counts / model)
+        collapsed_gradient = np.sum(gradient, axis=1)
+
+        # Perform gradient descent
+        if iteration == 0:
+            learning_rate = 1e-5
+        else:
+            accel = collapsed_gradient - old_gradient
+            learning_rate = np.sum((params - old_params) * accel, axis=0) / np.sum(accel**2, axis=0)
+            learning_rate[~np.isfinite(learning_rate)] = 1e-5
+            learning_rate = np.clip(learning_rate, 1e-5, 1e-3)
+        old_params = np.copy(params)
+        params -= collapsed_gradient * learning_rate
+        old_gradient = collapsed_gradient
+
+        # Implement bounds
+        params[0] = np.clip(params[0], 0.02, 1.5)
+        params[1] = np.clip(params[1], -2, 2)
+        params[2] = np.clip(params[2], 0.001, 10)
+        params[3] = np.clip(params[3], 0.05, 1)
+        params[4] = np.clip(params[4], 0.001, 0.2)
+        params[5] = np.clip(params[5], 0.05, 1)
+        params[6] = np.clip(params[6], 0.001, 0.2)
+
+        # score = 2 * np.sum(model - counts*np.log(model), axis=0)
+        # penalty = 2*(counts*np.log(counts) - counts)
+        # penalty[counts==0] = 0
+        # score += np.sum(penalty, axis=0) # Make it close to zero
+        # print(np.nanpercentile(score, 10), np.nanmedian(score), np.nanpercentile(score, 90))
 
     total_amp = params[2] + params[4] + params[6]
     params[2] /= total_amp

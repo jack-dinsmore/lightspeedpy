@@ -17,6 +17,7 @@ def main():
     parser_stack_bias = subparsers.add_parser('stack-bias', help='Stack up bias frames')
     parser_stack_bias.add_argument("--input", required=True, help="File name of dataset")
     parser_stack_bias.add_argument("--output", required=True, help="File name of output image")
+    parser_stack_bias.add_argument("--map-noise", help="Set to additionally map the noise distribution of each pixel", action=argparse.BooleanOptionalAction)
     parser_stack_bias.add_argument("--min-index", help="Minimum cube index")
     parser_stack_bias.add_argument("--max-index", help="Maximum cube index")
     parser_stack_bias.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)

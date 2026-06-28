@@ -320,7 +320,7 @@ class DataSet:
             A :class:`DataSet` containing the bias observation, or the :class:`PixelProperties` of the observation
         """
         if type(bias) is DataSet:
-            if hasattr(self, "_pixel_properties"):
+            if self._pixel_properties is not None:
                 raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
             self.bias = bias
         else:

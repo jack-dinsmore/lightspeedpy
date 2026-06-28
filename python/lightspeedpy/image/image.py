@@ -26,23 +26,18 @@ class Image:
     offset : (int, int), optiona;
         ra, dec offset in arcseconds for the WCS
     """
-    def __init__(self, image, data_set, n_frames, offset=None, correct_qe=True):
+    def __init__(self, total_photons, data_set, n_frames, offset=None, correct_qe=True):
         self.header0 = data_set.header0
         self.header1 = data_set.header1
-        qe = QuantumEfficiency()
         for frame in data_set.iterator(use_bar=False):
             self.frame_duration = frame.duration
             break
         if type(n_frames) is int:
-            self.n_frames = n_frames * np.ones(image.shape, int)
+            self.n_frames = n_frames * np.ones(total_photons.shape, int)
         else:
             self.n_frames = n_frames
 
-        electrons_per_frame = image / self.n_frames
-        if correct_qe:
-            photons_per_frame = qe.get_inverse(electrons_per_frame)
-        else:
-            photons_per_frame = electrons_per_frame
+        photons_per_frame = total_photons / self.n_frames
         self.photons_per_second = photons_per_frame / self.frame_duration
         self.flat_corrected = False
         if data_set.flat is not None:
@@ -61,7 +56,7 @@ class Image:
             ra -= offset[0]-offset[1]/3600
             dec -= offset[1]/3600*np.cos(dec*np.pi/180)
         self.wcs.wcs.crval = [ra, dec]
-        self.wcs.wcs.crpix = [image.shape[0] / 2., image.shape[1] / 2.]
+        self.wcs.wcs.crpix = [total_photons.shape[0] / 2., total_photons.shape[1] / 2.]
         self.wcs.wcs.cdelt = [-pixscale, pixscale]
 
     def nan_remove(self):
@@ -191,5 +186,8 @@ def make_image(data_set, method):
 
     if method == "weight":
         image = weighter.get_fluxes().reshape(data_set.image_shape)
+    else:
+        qe = QuantumEfficiency
+        image = qe.get_inverse(image)
 
     return Image(image, data_set, n_frames)

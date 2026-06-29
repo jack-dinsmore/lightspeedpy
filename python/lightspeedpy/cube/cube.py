@@ -8,7 +8,7 @@ def cube(args):
     cube = np.zeros((data_set.num_frames(),data_set.image_shape[0], data_set.image_shape[1]))
     print(cube.shape)
     for i, frame in enumerate(data_set):
-        cube[i] = frame.image
+        cube[i] = frame.image / data_set.flat
     
     primary_hdu = fits.PrimaryHDU(cube, header=data_set.header0)
     cube_hdu = fits.ImageHDU(data=cube, name="CUBE", header=data_set.header1)

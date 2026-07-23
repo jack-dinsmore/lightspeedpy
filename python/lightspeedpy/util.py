@@ -64,10 +64,10 @@ class EnormousArray:
         if not os.path.exists(TMP_LOCATION):
             os.mkdir(TMP_LOCATION)
     
-    def append(self, line):
-        self.data.append(line)
+    def append(self, item):
+        self.data.append(item)
         if self.max_data_len is None:
-            self.max_data_len = int(1e9 / np.array(line).nbytes)
+            self.max_data_len = int(1e9 / np.array(item).nbytes)
         if len(self.data) > self.max_data_len:
             self.finish()
     

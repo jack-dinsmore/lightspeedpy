@@ -317,7 +317,8 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
         psf_image = np.ones(data_set.image_shape)
 
     if method == "weight":
-        weighter = Weighter(data_set)
+        one_to_one = np.all(psf_image == 1) and not SMEAR_FRAME
+        weighter = Weighter(data_set, one_to_one=one_to_one)
 
     for frame in data_set:
         masked_image = frame.image[roi_mask]
@@ -337,12 +338,16 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
         elif method == "clip":
             electrons += np.nansum(np.round(masked_image)) * weights
         elif method == "weight":
-            psf_weights = psf_image[roi_mask]
-            psf_weights /= np.sum(psf_weights)
-            weight_matrix = np.multiply.outer(psf_weights, weights)
-            weighter.add_pixels(masked_image, weight_matrix, roi_mask)
+            if one_to_one:
+                weighter.add_pixels(masked_image, np.ones(len(masked_image), dtype=int) * np.argmax(weights), roi_mask)
+            else:
+                psf_weights = psf_image[roi_mask]
+                psf_weights /= np.sum(psf_weights)
+                weight_matrix = np.multiply.outer(psf_weights, weights)
+                weighter.add_pixels(masked_image, weight_matrix, roi_mask)
         else:
             raise Exception(f"Unrecognized method {method}")
+
     if method == "sum" or method == "clip":
         fluxes = electrons / exposures # Counts per second
     else:

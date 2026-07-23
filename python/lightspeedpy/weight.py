@@ -4,6 +4,8 @@ from .qe import QuantumEfficiency, MAX_D
 from .util import EnormousArray
 
 def fast_pinv(m):
+    if len(m.shape) == 1:
+        return m / np.sum(m**2)
     if np.all(np.sum(m != 0, axis=1) == 1):
         # There's a simplification for calculating the MPI
         weights_pinv = np.copy(np.transpose(m))
@@ -53,7 +55,12 @@ class Weighter:
         all_probs = np.array([self.pixel_properties.get_prob(image, n, mask) for n in self.ns]).transpose()
 
         # Add each pixel individually
-        for probs, weight in zip(all_probs.reshape(-1, all_probs.shape[-1]), weights.reshape(-1, weights.shape[-1])):
+        if len(weights.shape) == len(all_probs.shape):
+            w_iter = weights.reshape(-1, weights.shape[-1])
+        else:
+            w_iter = weights.reshape(-1)
+
+        for probs, weight in zip(all_probs.reshape(-1, all_probs.shape[-1]), w_iter):
             self.probs_list.append(probs)
             self.weights_list.append(weight)
             qe_corrected_image = self.qe.get_inverse(image)
@@ -73,7 +80,10 @@ class Weighter:
 
         # Check boundaries
         for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):
-            lambdas = np.einsum("ai,i->a", chunk_weights, fluxes)
+            if self.one_to_one:
+                lambdas = fluxes[chunk_weights]
+            else:
+                lambdas = np.einsum("ai,i->a", chunk_weights, fluxes)
             if np.nanmin(lambdas) < 0:
                 normal = -np.minimum(lambdas, 0)
                 normal /= np.sqrt(np.sum(normal**2))
@@ -129,7 +139,10 @@ class Weighter:
 
             # Check boundaries
             for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):
-                lambdas = np.einsum("ai,i->a", chunk_weights, fluxes)
+                if self.one_to_one:
+                    lambdas = fluxes[chunk_weights]
+                else:
+                    lambdas = np.einsum("ai,i->a", chunk_weights, fluxes)
                 if np.nanmin(lambdas) < 0:
                     normal = -np.minimum(lambdas, 0)
                     normal /= np.sqrt(np.sum(normal**2))

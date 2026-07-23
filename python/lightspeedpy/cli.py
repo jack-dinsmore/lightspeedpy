@@ -26,10 +26,11 @@ def get_dataset(args):
 
     print("Loaded files")
     data_set.display_filenames()
-    if not args.self_bias and not args.bias:
+    if not args.bias:
         print("WARNING: No bias provided")
 
     def set_bias(ds):
+        # Sets the bias for an observation
         if args.bias is not None:
             is_pix_prop = False
             if os.path.exists(args.bias):
@@ -39,9 +40,7 @@ def get_dataset(args):
             if is_pix_prop:
                 ds.set_bias(PixelProperties.load(args.bias))
             else:
-                ds.set_bias(DataSet.from_first(args.bias, cut_cr=False))
-        if args.self_bias:
-            ds.set_self_bias()
+                ds.set_bias(DataSet.from_first(args.bias, cut_cr=False, bar_color='green'))
 
     set_bias(data_set)
 
@@ -78,7 +77,6 @@ def add_dataset_args(parser):
     parser.add_argument("--input", required=True, help="Name of the cube001 file")
     parser.add_argument("--output", required=True, help="File name of output image")
     parser.add_argument("--bias", help="File name of bias")
-    parser.add_argument("--self-bias", help="Set to measure bias from self", action=argparse.BooleanOptionalAction)
     parser.add_argument("--dark", help="File name of dark")
     parser.add_argument("--flat", help="File name of flat")
     parser.add_argument("--min-index", help="Minimum cube index")

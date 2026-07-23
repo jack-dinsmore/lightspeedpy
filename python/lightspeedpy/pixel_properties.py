@@ -1,6 +1,4 @@
 import numpy as np
-from scipy.optimize import least_squares
-from multiprocessing import Pool
 import os, tqdm
 from astropy.io import fits
 from .util import trim_image
@@ -20,16 +18,15 @@ class PixelProperties:
         Noises in each pixel, defined as the standard deviation of the Gaussian error approximation.
     """
     def __init__(self, bias, widths, params, source_data_set, dest_data_set):
+        self.params = params
         if source_data_set is not None:
             self.bias = trim_image(bias, source_data_set, dest_data_set)
             self.widths = trim_image(widths, source_data_set, dest_data_set)
-            self.params = None
             self.header0 = source_data_set.header0
             self.header1 = source_data_set.header1
         else:
             self.bias = bias
             self.widths = widths
-            self.params = params
 
     def has_noise_distro(self):
         return self.params is not None
@@ -129,7 +126,7 @@ class PixelProperties:
 
     def default(data_set):
         """
-        Get the default pixel properties for a data set with no bias and not self-biased.
+        Get the default pixel properties for a data set with no bias.
         """
         return PixelProperties(
             np.zeros(data_set.image_shape),
@@ -164,6 +161,13 @@ class PixelProperties:
         m2 /= n_frames
         counts = counts[1:-1,:]
 
+        # Fix gaps
+        gap_mask = (counts[:-2,:] > 0) & (counts[2:,:] > 0) & (counts[1:-1,:] == 0)
+        count_gap_mask = np.zeros(counts.shape, bool)
+        count_gap_mask[1:-1,:] = gap_mask
+        local_average = (counts[:-2,:] + counts[2:,:]) / 2
+        counts[count_gap_mask] = local_average[gap_mask]
+
         bias = m1
         widths = np.sqrt(m2 - m1**2)
 
@@ -178,7 +182,7 @@ class PixelProperties:
     
 def fit_gaussians(edges, counts):
     """
-    Fit a triple Gaussian to a list of histograms.
+    Fit a triple Gaussian to a list of histograms by minimizing the Cash statistic
 
     Parameters
     ----------
@@ -191,58 +195,56 @@ def fit_gaussians(edges, counts):
     """
     n_bins, n_pixels = counts.shape
     centers = (edges[1:] + edges[:-1]) / 2
-    total_area  = np.sum(counts, axis=0) * (centers[1]-centers[0])
-    x0 = np.array([0.4, 0., 0.9, 0.5, 0.05, 0.5, 0.05])
+    n_counts = np.sum(counts, axis=0)
+    total_area  = n_counts * (centers[1] - centers[0])
+    x0 = np.array([0.2, 0., 0.9, 0.6, 0.05, 0.6, 0.05])
     params = np.repeat(x0[:, None], n_pixels, axis=1)
     gradient = np.zeros((7, n_bins, n_pixels))
     old_gradient = None
     old_params = None
+    excess = 1e-7 * n_counts
 
-    print("Calculating noise distribution")
-    for iteration in tqdm.tqdm(range(100), colour='red'):
+    for iteration in tqdm.tqdm(range(100), colour="yellow"):
+        normalization = total_area / np.sqrt(2*np.pi * params[0]**2)
         x01 = np.subtract.outer(centers, params[1])/params[0] # Shape e-1, p
         x02 = x01 - params[3]/params[0]
         x03 = x01 + params[5]/params[0]
-        gauss_1 = np.exp(-x01**2 / 2) * params[2] * total_area
-        gauss_2 = np.exp(-x02**2 / 2) * params[4] * total_area
-        gauss_3 = np.exp(-x03**2 / 2) * params[6] * total_area
-        model = gauss_1 + gauss_2 + gauss_3
-        gradient[0,:,:] = (gauss_1*x01**2 + gauss_2*x02**2 + gauss_3*x03**2) / params[0]
+        gauss_1 = np.exp(-x01**2 / 2) * params[2] * normalization
+        gauss_2 = np.exp(-x02**2 / 2) * params[4] * normalization
+        gauss_3 = np.exp(-x03**2 / 2) * params[6] * normalization
+        model = gauss_1 + gauss_2 + gauss_3 + excess # Extra bit to avoid divide by zero errors
+        gradient[0,:,:] = (gauss_1*(x01**2-1) + gauss_2*(x02**2-1) + gauss_3*(x03**2-1)) / params[0]
         gradient[1,:,:] = (gauss_1*x01 + gauss_2*x02 + gauss_3*x03) / params[0]
         gradient[2,:,:] = gauss_1 / params[2]
         gradient[3,:,:] = gauss_2 * x02 / params[0]
         gradient[4,:,:] = gauss_2 / params[4]
-        gradient[5,:,:] = -gauss_3 * x02 / params[0]
+        gradient[5,:,:] = -gauss_3 * x03 / params[0]
         gradient[6,:,:] = gauss_3 / params[6]
         gradient *= 2 * (1 - counts / model)
         collapsed_gradient = np.sum(gradient, axis=1)
 
         # Perform gradient descent
-        if iteration == 0:
-            learning_rate = 1e-5
-        else:
+        learning_rate = 1e-2 / n_counts.astype(float)
+        if iteration > 0:
             accel = collapsed_gradient - old_gradient
-            learning_rate = np.sum((params - old_params) * accel, axis=0) / np.sum(accel**2, axis=0)
-            learning_rate[~np.isfinite(learning_rate)] = 1e-5
-            learning_rate = np.clip(learning_rate, 1e-5, 1e-3)
+            bb_learning_rate = np.sum((params - old_params) * accel, axis=0) / np.sum(accel**2, axis=0)
+            bb_learning_rate = np.clip(bb_learning_rate, 5e-5 / n_counts.astype(float), 3e-1 / n_counts.astype(float))
+            mask = np.isfinite(bb_learning_rate)
+            learning_rate[mask] = bb_learning_rate[mask]
+
         old_params = np.copy(params)
         params -= collapsed_gradient * learning_rate
         old_gradient = collapsed_gradient
 
         # Implement bounds
-        params[0] = np.clip(params[0], 0.02, 1.5)
-        params[1] = np.clip(params[1], -2, 2)
+        params[0] = np.clip(params[0], 0.08, 0.75)
+        params[1] = np.clip(params[1], -1., 1.)
         params[2] = np.clip(params[2], 0.001, 10)
         params[3] = np.clip(params[3], 0.05, 1)
         params[4] = np.clip(params[4], 0.001, 0.2)
         params[5] = np.clip(params[5], 0.05, 1)
         params[6] = np.clip(params[6], 0.001, 0.2)
 
-        # score = 2 * np.sum(model - counts*np.log(model), axis=0)
-        # penalty = 2*(counts*np.log(counts) - counts)
-        # penalty[counts==0] = 0
-        # score += np.sum(penalty, axis=0) # Make it close to zero
-        # print(np.nanpercentile(score, 10), np.nanmedian(score), np.nanpercentile(score, 90))
 
     total_amp = params[2] + params[4] + params[6]
     params[2] /= total_amp

@@ -36,8 +36,8 @@ class DataSet:
 
     max_frames : int, optional
         Maximum number of frames to iterate through. Default: all the frames
-    use_bar : bool, optional
-        Show a progress bar. Default: True.
+    bar_color : str or None
+        Color of the progress bar. If None, no color bar will be shown.
     cut_cr : bool, optional
         Cut cosmic rays. Default: True
     cr_thresh: int, optional
@@ -83,7 +83,7 @@ class DataSet:
 
         max_frames : int, optional
             Maximum number of frames to iterate through. Default: all the frames
-        use_bar : bool, optional
+        bar_color : bool, optional
             Show a progress bar. Default: True.
         cut_cr : bool, optional
             Cut cosmic rays. Default: True
@@ -119,8 +119,8 @@ class DataSet:
             name of the directory
         max_frames : int, optional
             Maximum number of frames to iterate through. Default: all the frames
-        use_bar : bool, optional
-            Show a progress bar. Default: True.
+        bar_color : str, optional
+            Color of the progress bar. If None, no bar will be shown.
         cut_cr : bool, optional
             Cut cosmic rays. Default: True
         cr_thresh: int, optional
@@ -150,8 +150,8 @@ class DataSet:
 
         max_frames : int, optional
             Maximum number of frames to iterate through. Default: all the frames
-        use_bar : bool, optional
-            Show a progress bar. Default: True.
+        bar_color : str, optional
+            Color of the progress bar. If None, no bar will be shown.
         cut_cr : bool, optional
             Cut cosmic rays. Default: True
         cr_thresh: int, optional
@@ -170,7 +170,7 @@ class DataSet:
         return self.iterator().__iter__()
     
     def get_duration(self):
-        for frame in self:
+        for frame in self.iterator(bar_color=None):
             return frame.duration
 
     def display_filenames(self):
@@ -193,12 +193,12 @@ class DataSet:
             start = breaks[i]
             stop = breaks[i+1]-1
             if stop - start > 2:
-                print(sorted_filenames[start], f"({sorted_frames[start]}) frames")
+                print(sorted_filenames[start], f"({sorted_frames[start]} frames)")
                 print("...")
-                print(sorted_filenames[stop], f"({sorted_frames[stop]}) frames")
+                print(sorted_filenames[stop], f"({sorted_frames[stop]} frames)")
             else:
                 for j in range(start, stop+1):
-                    print(sorted_filenames[j], f"({sorted_frames[j]}) frames")
+                    print(sorted_filenames[j], f"({sorted_frames[j]} frames)")
 
     def bootstrap(self, seed):
         """
@@ -321,17 +321,11 @@ class DataSet:
         """
         if type(bias) is DataSet:
             if self._pixel_properties is not None:
-                raise Exception("You set a bias frame after calling a function that calculates the pixel properties (e.g. set_self_bias, get_pixel_properties, etc.). You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
+                raise Exception("You set a bias frame after calling a function that calculates the pixel properties. You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
             self.bias = bias
         else:
             self._pixel_properties = bias
             self.bias = None
-
-    def set_self_bias(self):
-        """
-        Estimate an observation from these data. This can only be done accurately for very fast readout of a faint source, where most of the pixels detect zero photons.
-        """
-        self.bias = self
 
     def set_dark(self, dark_data_set):
         """

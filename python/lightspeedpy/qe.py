@@ -4,8 +4,9 @@ from scipy.interpolate import interp1d
 from scipy.special import binom, factorial
 
 QE_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "qe.csv"))
-MAX_D = 4
-MAX_ELECTRONS = 100#8200
+MAX_D = 6
+MAX_ELECTRONS = 8200
+MAX_CALC_N = 100
 
 class QuantumEfficiency:
     """Class to store information about the QE"""
@@ -37,20 +38,25 @@ class QuantumEfficiency:
     def get_d(self, k, n):
         if k == 0: return self.d_interps[0](n)
         if k == 1: return np.zeros_like(n)
-        if k >= MAX_D: return np.zeros_like(n)
+        if k > MAX_D: return np.zeros_like(n)
         return self.d_interps[k-1](n)
     
     def _get_lambda_interp(self):
         ns = np.arange(0, MAX_ELECTRONS).astype(np.float64)
         values = []
         for n in ns:
+            if n == 0: 
+                values.append(0)
+                continue
             l = n / self(n)
-            ms = np.arange(n, MAX_ELECTRONS)
-            coefficient = self(ms)**n * (1 - self(ms))**(ms-n) * binom(ms, n)
-            for iteration in range(10):
-                d1 = np.sum(self._get_poisson_deriv(l, ms, 1)*coefficient)
-                d2 = np.sum(self._get_poisson_deriv(l, ms, 2)*coefficient)
-                l -= d1 / d2
+            if n < MAX_CALC_N/2:
+                ms = np.arange(n, MAX_CALC_N)
+                coefficient = self(ms)**n * (1 - self(ms))**(ms-n) * binom(ms, n)
+                for iteration in range(10):
+                    d1 = np.sum(self._get_poisson_deriv(l, ms, 1)*coefficient)
+                    d2 = np.sum(self._get_poisson_deriv(l, ms, 2)*coefficient)
+                    l -= d1 / d2
+                    l = max(l, 0)
             values.append(l)
         return interp1d(ns, values, bounds_error=False)
 
@@ -68,7 +74,7 @@ class QuantumEfficiency:
         values = []
         for n in ns:
             l = self.lambda_interp(n)
-            ms = np.arange(n, MAX_ELECTRONS)
+            ms = np.arange(n, MAX_CALC_N)
             coefficient = self(ms)**n * (1 - self(ms))**(ms-n) * binom(ms, n)
             values.append(np.sum(self._get_poisson_deriv(l, ms, k)*coefficient))
         return interp1d(ns, values)

@@ -65,22 +65,17 @@ class EphemerisLibrary():
         for index in self.ephemerides[psr]:
             with open(f"{TMP_LOCATION}/{psr}_{index}.pkl", 'rb') as f:
                 saved_model = pickle.load(f)
-                if not models_are_equal(saved_model, model): continue
+                if not models_are_equal(saved_model, model):
+                    continue
+
+            timestamps, phases = np.load(f"{TMP_LOCATION}/{psr}_{index}.npy")
+            if len(timestamps) != len(these_timestamps) or np.max(np.abs(timestamps - these_timestamps)) > 1e-6:
+                # The timestamps are not the same, meaning different files are being loaded with the same ephem
+                continue
 
             # This model matches the provided ephemeris.
-            timestamps, phases = np.load(f"{TMP_LOCATION}/{psr}_{index}.npy")
-
-            # Update the time file
             with open(f"{TMP_LOCATION}/{psr}_{index}.dat", 'w') as f:
                 f.write(str(datetime.datetime.now()))
-
-            if len(timestamps) != len(these_timestamps):
-                # The timestamps are not the same, meaning different files are being loaded with the same ephem
-                continue
-            max_delta = np.max(np.abs(timestamps - these_timestamps))
-            if max_delta > 1e-8:
-                # The timestamps are not the same, meaning different files are being loaded with the same ephem
-                continue
 
             return phases
         

@@ -26,10 +26,10 @@ class Image:
     offset : (int, int), optiona;
         ra, dec offset in arcseconds for the WCS
     """
-    def __init__(self, total_photons, data_set, n_frames, offset=None, correct_qe=True):
+    def __init__(self, total_photons, data_set, n_frames, offset=None):
         self.header0 = data_set.header0
         self.header1 = data_set.header1
-        for frame in data_set.iterator(use_bar=False):
+        for frame in data_set.iterator(bar_color=False):
             self.frame_duration = frame.duration
             break
         if type(n_frames) is int:
@@ -46,7 +46,10 @@ class Image:
             self.flat_corrected = True
         self.pixel_properties = copy.deepcopy(data_set.get_pixel_properties(False))
 
-        self.rot_angle = float(data_set.header1["TELPA"]) + float(data_set.header1["ROTENC"]) # deg
+        try:
+            self.rot_angle = float(data_set.header1["TELPA"]) + float(data_set.header1["ROTENC"]) # deg
+        except:
+            self.rot_angle = 0
         pixscale = PIXEL_SIZE / 3600
         self.wcs = WCS(naxis=2)
         self.wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
@@ -173,6 +176,7 @@ def make_image(data_set, method):
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
+
         masked_image = frame.image[good_mask]
         if method == "sum":
             image[good_mask] += masked_image
@@ -187,7 +191,10 @@ def make_image(data_set, method):
     if method == "weight":
         image = weighter.get_fluxes().reshape(data_set.image_shape)
     else:
-        qe = QuantumEfficiency
+        qe = QuantumEfficiency()
         image = qe.get_inverse(image)
+
+        import matplotlib.pyplot as plt
+        plt.imsave("foo.png", image)
 
     return Image(image, data_set, n_frames)

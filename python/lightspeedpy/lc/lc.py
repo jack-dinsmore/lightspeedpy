@@ -165,7 +165,7 @@ class Lightcurve:
         eph : Ephemeris
             Target ephemeris
         """
-        for frame in data_set.iterator(use_bar=False):
+        for frame in data_set.iterator(bar_color=None):
             duration = frame.duration
             break
         return Lightcurve(edges, flux, exposures, eph.nu, data_set.header0, data_set.header1, duration)
@@ -316,11 +316,11 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
     if psf_image is None:
         psf_image = np.ones(data_set.image_shape)
 
-    weighter = Weighter(data_set)
+    if method == "weight":
+        weighter = Weighter(data_set)
 
     for frame in data_set:
-        good_mask = roi_mask & np.isfinite(frame.image)
-        masked_image = frame.image[good_mask]
+        masked_image = frame.image[roi_mask]
         
         if SMEAR_FRAME:
             start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
@@ -333,18 +333,18 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
 
         exposures += frame.duration*weights
         if method == "sum":
-            electrons += np.sum(masked_image) * weights
+            electrons += np.nansum(masked_image) * weights
         elif method == "clip":
-            electrons += np.sum(np.round(masked_image)) * weights
+            electrons += np.nansum(np.round(masked_image)) * weights
         elif method == "weight":
-            psf_weights = psf_image[good_mask]
+            psf_weights = psf_image[roi_mask]
             psf_weights /= np.sum(psf_weights)
             weight_matrix = np.multiply.outer(psf_weights, weights)
-            weighter.add_pixels(masked_image, weight_matrix, good_mask)
+            weighter.add_pixels(masked_image, weight_matrix, roi_mask)
         else:
             raise Exception(f"Unrecognized method {method}")
     if method == "sum" or method == "clip":
         fluxes = electrons / exposures # Counts per second
     else:
-        fluxes = weighter.get_fluxes()
+        fluxes = weighter.get_fluxes() / frame.duration
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

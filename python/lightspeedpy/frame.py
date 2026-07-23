@@ -13,7 +13,7 @@ class DataSetIteratorRet:
         return DataSetIterator(self.data_set, **self.kwargs)
 
 class DataSetIterator:
-    def __init__(self, data_set, cut_cr=True, use_bar=True, max_frames=None, cr_thresh=20):
+    def __init__(self, data_set, cut_cr=True, max_frames=None, cr_thresh=20, bar_color="white"):
         self.data_set = data_set
         self.cut_cr = cut_cr
         self.max_frames = max_frames
@@ -27,14 +27,11 @@ class DataSetIterator:
         self._renew_file()
         n_frames = data_set.num_frames()
 
-        if max_frames is not None:
-            use_bar = use_bar and max_frames > 1 # Don't use the bar if there's > 1 frame
-
-        if use_bar:
+        if bar_color is not None:
             if max_frames is not None and max_frames < n_frames:
-                self.bar = tqdm.tqdm(total=max_frames, colour="green")
+                self.bar = tqdm.tqdm(total=max_frames, colour=bar_color)
             else:
-                self.bar = tqdm.tqdm(total=n_frames)
+                self.bar = tqdm.tqdm(total=n_frames, colour=bar_color)
         else:
             self.bar = None
 
@@ -74,11 +71,14 @@ class DataSetIterator:
         # Get the frame
         start_pixel = self.data_set.image_shape[0] * self.frame_index
         image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :]
+
+
         is_saturated = np.max(image) >= 65_535
         image = image.astype(float)
         image -= 199.5
         image /= ADU_PER_ELECTRON
         image -= self.data_set.get_pixel_properties(False).bias
+
         if self.data_set.dark is not None:
             image -= self.data_set.dark * self.data_set.seconds_per_frame
         if self.cut_cr:

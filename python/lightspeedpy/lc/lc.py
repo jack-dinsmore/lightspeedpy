@@ -86,7 +86,7 @@ def get_lc(args):
     if args.errors is None:
         lc = make_lc(data_set, args.bins, roi, ephemeris, args.mode, psf_image)
     else:
-        N_LCS = 16
+        N_LCS = 8 # TODO
         
         params = []
         for _ in range(N_LCS):
@@ -94,7 +94,7 @@ def get_lc(args):
         
         with Pool() as pool:
             lcs = pool.starmap(get_bootstrap_instance, params)
-        
+
         lc_m0 = np.zeros_like(lcs[0].flux)
         lc_m1 = np.zeros_like(lcs[0].flux)
         lc_m2 = np.zeros_like(lcs[0].flux)
@@ -352,4 +352,5 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
         fluxes = electrons / exposures # Counts per second
     else:
         fluxes = weighter.get_fluxes() / frame.duration
+        # TODO the fluxes are the wrong size
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

@@ -9,7 +9,7 @@ from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
 from ..util import from_hms, from_dms
 from ..weight import Weighter
 
-FLAT_NAN_THRESHOLD = 0.1
+FLAT_NAN_THRESHOLD = 0.02
 
 class Image:
     """
@@ -172,7 +172,8 @@ def make_image(data_set, method):
     """
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
-    weighter = Weighter(data_set, one_to_one=True)
+    if method == "weight":
+        weighter = Weighter(data_set, one_to_one=True)
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
@@ -193,8 +194,5 @@ def make_image(data_set, method):
     else:
         qe = QuantumEfficiency()
         image = qe.get_inverse(image)
-
-        import matplotlib.pyplot as plt
-        plt.imsave("foo.png", image)
 
     return Image(image, data_set, n_frames)

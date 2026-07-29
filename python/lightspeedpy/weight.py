@@ -13,6 +13,7 @@ def fast_pinv(m):
         return weights_pinv
     return np.linalg.pinv(m)
 
+
 class Weighter:
     """
     A class to perform weighted analyses. After initialization, add pixels using the add_pixels method and perform the fit using get_fluxes.
@@ -26,16 +27,20 @@ class Weighter:
     one_to_one : bool, optional
         Set to True to guarantee that the weights you are using are everywhere zero except at one index, at which the weight is 1, and that index is unique. If you set this flag, then the weights you pass to add_pixels needs to be the index of the non-zero item.
     """
-    def __init__(self, data_set, max_n=3, one_to_one=False):
+    def __init__(self, data_set, n_outputs, max_n=3, one_to_one=False):
         self.weights_list = EnormousArray(5_000_000) # Stores the w_{ai} matrix. Shape: a, i
         self.probs_list = EnormousArray(5_000_000) # Shape: a, max_n
         self.qe = QuantumEfficiency()
         self.ns = np.arange(max_n)
         self.pixel_properties = data_set.get_pixel_properties(True)
-        self.initial = None
+        self.initial = np.zeros(n_outputs)
         self.data_set_n_frames = data_set.num_frames()
 
         self.one_to_one = one_to_one
+
+    def finish(self):
+        self.weights_list.finish()
+        self.probs_list.finish()
 
     def add_pixels(self, image, weights, mask=None):
         """
@@ -67,16 +72,13 @@ class Weighter:
             qe_corrected_image[np.isnan(qe_corrected_image)] = 0
 
             if self.one_to_one:
-                new_lambda_estimate = qe_corrected_image[weights]
+                np.add.at(self.initial, weights, qe_corrected_image)
             else:
-                new_lambda_estimate = np.einsum("ia,a->i", fast_pinv(weights), qe_corrected_image)
-            if self.initial is None:
-                self.initial = new_lambda_estimate 
-            else:
-                self.initial += new_lambda_estimate
+                self.initial += np.einsum("ia,a->i", fast_pinv(weights), qe_corrected_image)
 
     def get_fluxes(self):
         fluxes = self.initial / self.data_set_n_frames
+        fluxes -= np.min(fluxes)
 
         # Check boundaries
         for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):
@@ -136,6 +138,7 @@ class Weighter:
 
             old_fluxes = np.copy(fluxes)
             fluxes -= inverse_hessian @ gradient
+            print(fluxes)
 
             # Check boundaries
             for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):

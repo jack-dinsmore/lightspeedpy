@@ -318,7 +318,7 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
 
     if method == "weight":
         one_to_one = np.all(psf_image == 1) and not SMEAR_FRAME
-        weighter = Weighter(data_set, one_to_one=one_to_one)
+        weighter = Weighter(data_set, n_bins, one_to_one=one_to_one)
 
     for frame in data_set:
         masked_image = frame.image[roi_mask]
@@ -347,6 +347,26 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
                 weighter.add_pixels(masked_image, weight_matrix, roi_mask)
         else:
             raise Exception(f"Unrecognized method {method}")
+
+
+
+    weighter.finish()
+    import pickle
+    with open("weighter.pkl", 'wb') as f:
+        pickle.dump(weighter, f)
+
+    import pickle
+    for frame in data_set:
+        break
+    with open("weighter.pkl", 'rb') as f:
+        weighter = pickle.load(f)
+    print(weighter)
+    # Rmemeber the change to util # TODO
+
+
+
+
+
 
     if method == "sum" or method == "clip":
         fluxes = electrons / exposures # Counts per second

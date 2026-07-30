@@ -2,26 +2,54 @@ import numpy as np
 import os
 from scipy.interpolate import interp1d
 from scipy.special import binom, factorial
+import tqdm
 
 QE_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "qe.csv"))
+P_EPSILON_GAMMA_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "tmp", "p_epsilon_gamma.npy"))
 MAX_D = 6
 MAX_ELECTRONS = 8200
 MAX_CALC_N = 100
+TRAP_N = 4
+TRAP_P = 0.11
 
 class QuantumEfficiency:
     """Class to store information about the QE"""
     def __init__(self):
         data = np.loadtxt(QE_LOCATION, delimiter=',')
-        self.interp = interp1d(data[:,0], data[:,1], fill_value=(data[0,1], data[-1,1]), bounds_error=False)
-
+        self.qe_interp = interp1d(data[:,0], data[:,1], fill_value=(data[0,1], data[-1,1]), bounds_error=False)
+        self.p_epsilon_gamma = self._get_p_epsilon_gamma()
         self.lambda_interp = self._get_lambda_interp()
 
-        self.d_interps = [self._get_d_interp(0)]
+        self.d_arrays = [self._get_d_array(0)]
         for k in range(2, MAX_D+1):
-            self.d_interps.append(self._get_d_interp(k))
+            self.d_arrays.append(self._get_d_array(k))
+        self.d_arrays = np.array(self.d_arrays)
 
     def __call__(self, n):
-        return self.interp(n)
+        return self.qe_interp(n)
+
+    def _get_p_epsilon_gamma(self):
+        if not os.path.exists(P_EPSILON_GAMMA_LOCATION):
+            p_epsilon_gamma = np.zeros((MAX_ELECTRONS, MAX_ELECTRONS))
+            for gamma in tqdm(range(MAX_CALC_N), colour="green"):
+                n_caught = np.zeros(TRAP_N+1)
+                n_trial = 50_000
+                sites_used = np.zeros((n_trial, TRAP_N), bool)
+                for _ in range(gamma):
+                    catch = (np.random.random((n_trial, TRAP_N)) < TRAP_P) & (~sites_used)
+                    photoelectron_caught = np.any(catch, axis=1)
+                    trap_index = np.argmax(catch, axis=1)[photoelectron_caught]
+                    sites_used[np.where(photoelectron_caught)[0], trap_index] = True
+                n_caught = np.sum(sites_used, axis=1)
+                catch_prob = np.histogram(n_caught, np.arange(TRAP_N+2)-0.5, density=True)[0]
+                for n in range(TRAP_N + 1):
+                    p_epsilon_gamma[gamma-n, gamma] = catch_prob[n]
+
+            for gamma in range(MAX_CALC_N, MAX_ELECTRONS):
+                p_epsilon_gamma[gamma - TRAP_N, gamma] = 1
+
+            np.save(P_EPSILON_GAMMA_LOCATION, p_epsilon_gamma)
+        return np.load(P_EPSILON_GAMMA_LOCATION)
     
     def get_inverse(self, n):
         if type(n) is np.ndarray:
@@ -35,46 +63,45 @@ class QuantumEfficiency:
                 return self.lambda_interp(n)
         return lambdas
     
-    def get_d(self, k, n):
-        if k == 0: return self.d_interps[0](n)
-        if k == 1: return np.zeros_like(n)
-        if k > MAX_D: return np.zeros_like(n)
-        return self.d_interps[k-1](n)
-    
     def _get_lambda_interp(self):
-        ns = np.arange(0, MAX_ELECTRONS).astype(np.float64)
-        values = []
-        for n in ns:
-            if n == 0: 
-                values.append(0)
-                continue
+        gammas = np.arange(MAX_CALC_N)
+        values = [0]
+        
+        for n in range(1, MAX_CALC_N//2):
             l = n / self(n)
-            if n < MAX_CALC_N/2:
-                ms = np.arange(n, MAX_CALC_N)
-                coefficient = self(ms)**n * (1 - self(ms))**(ms-n) * binom(ms, n)
-                for iteration in range(10):
-                    d1 = np.sum(self._get_poisson_deriv(l, ms, 1)*coefficient)
-                    d2 = np.sum(self._get_poisson_deriv(l, ms, 2)*coefficient)
-                    l -= d1 / d2
-                    l = max(l, 0)
+            p_epsilon_gamma = self.p_epsilon_gamma[n,:len(gammas)]
+            for iteration in range(8):
+                d1 = p_epsilon_gamma @ self._p_gamma_lambda_deriv(l, gammas, 1)
+                d2 = p_epsilon_gamma @ self._p_gamma_lambda_deriv(l, gammas, 2)
+                l -= d1 / d2
+                l = max(l, 0)
             values.append(l)
+        for n in range(MAX_CALC_N//2, MAX_ELECTRONS):
+            values.append(n / self(n))
+        ns = np.arange(0, MAX_ELECTRONS).astype(np.float64)
         return interp1d(ns, values, bounds_error=False)
 
-    def _get_poisson_deriv(self, l, m, k):
+    def _p_gamma_lambda_deriv(self, lamb, gamma, k):
         """
-        Get the kth derivative of the Poisson distribution wrt lambda evaluated at m counts. m is a vector, but not l and k.
+        Get the kth derivative of the Poisson distribution wrt lambda evaluated at gamma counts. gamma is a vector, but not lamb and k.
         """
-        ms, js = np.meshgrid(m, np.arange(k+1), indexing="ij")
-        values = binom(k, js) * l**(ms-js) * (-1)**(k-js) / factorial(ms-js) * np.exp(-l)
-        values[js>ms] = 0
+        gammas, js = np.meshgrid(gamma, np.arange(k+1), indexing="ij")
+        values = binom(k, js) * (-1)**(k-js) * lamb**(gammas-js) / factorial(gammas-js) * np.exp(-lamb)
+        values[js>gammas] = 0
         return np.sum(values, axis=1)
     
-    def _get_d_interp(self, k):
-        ns = np.arange(0, MAX_ELECTRONS).astype(float)
+    def get_d(self, k, epsilon):
+        if k == 0: return self.d_arrays[0,epsilon]
+        if k == 1: return np.zeros_like(epsilon)
+        if k > MAX_D: return np.zeros_like(epsilon)
+        return self.d_arrays[k-1,epsilon]
+    
+    def _get_d_array(self, k):
+        epsilons = np.arange(0, MAX_ELECTRONS)
         values = []
-        for n in ns:
-            l = self.lambda_interp(n)
-            ms = np.arange(n, MAX_CALC_N)
-            coefficient = self(ms)**n * (1 - self(ms))**(ms-n) * binom(ms, n)
-            values.append(np.sum(self._get_poisson_deriv(l, ms, k)*coefficient))
-        return interp1d(ns, values)
+        for epsilon in epsilons:
+            gammas = np.arange(MAX_CALC_N)
+            p_epsilon_gamma = self.p_epsilon_gamma[epsilon,:len(gammas)]
+            lamb = self.lambda_interp(epsilon)
+            values.append(p_epsilon_gamma @ self._p_gamma_lambda_deriv(lamb, gammas, k))
+        return values

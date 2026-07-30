@@ -71,6 +71,13 @@ class EnormousArray:
         if len(self.data) > self.max_data_len:
             self.finish()
     
+    def concatenate(self, items):
+        self.data += list(items)
+        if self.max_data_len is None:
+            self.max_data_len = int(1e9 / np.array(item).nbytes)
+        if len(self.data) > self.max_data_len:
+            self.finish()
+    
     def finish(self):
         if len(self.data) == 0: return
         filename = None

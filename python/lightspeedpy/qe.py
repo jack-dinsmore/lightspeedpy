@@ -20,11 +20,6 @@ class QuantumEfficiency:
         self.p_epsilon_gamma = self._get_p_epsilon_gamma()
         self.lambda_interp = self._get_lambda_interp()
 
-        self.d_arrays = [self._get_d_array(0)]
-        for k in range(2, MAX_D+1):
-            self.d_arrays.append(self._get_d_array(k))
-        self.d_arrays = np.array(self.d_arrays)
-
     def __call__(self, n):
         return self.qe_interp(n)
 
@@ -89,19 +84,3 @@ class QuantumEfficiency:
         values = binom(k, js) * (-1)**(k-js) * lamb**(gammas-js) / factorial(gammas-js) * np.exp(-lamb)
         values[js>gammas] = 0
         return np.sum(values, axis=1)
-    
-    def get_d(self, k, epsilon):
-        if k == 0: return self.d_arrays[0,epsilon]
-        if k == 1: return np.zeros_like(epsilon)
-        if k > MAX_D: return np.zeros_like(epsilon)
-        return self.d_arrays[k-1,epsilon]
-    
-    def _get_d_array(self, k):
-        epsilons = np.arange(0, MAX_ELECTRONS)
-        values = []
-        for epsilon in epsilons:
-            gammas = np.arange(MAX_CALC_N)
-            p_epsilon_gamma = self.p_epsilon_gamma[epsilon,:len(gammas)]
-            lamb = self.lambda_interp(epsilon)
-            values.append(p_epsilon_gamma @ self._p_gamma_lambda_deriv(lamb, gammas, k))
-        return values

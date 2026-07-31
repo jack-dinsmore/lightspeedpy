@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.special import factorial
+from scipy.special import factorial, binom
 from .qe import QuantumEfficiency, MAX_D
 from .util import EnormousArray
 
@@ -20,17 +20,26 @@ class Weighter:
     blur : bool, optional
         Set to False to guarantee that each pixel contributes to only one flux value. If you set this flag, then the weights you pass to add_pixels needs to be a tuple of the flux indices and the weight value.
     """
-    def __init__(self, data_set, n_outputs, max_n=3, blur=True):
+    def __init__(self, data_set, n_outputs, max_n=1, blur=True):
         self.weights_list = EnormousArray(MAX_ARRAY_SIZE) # Stores the w_{ai} matrix. Shape: a, i
         self.probs_list = EnormousArray(MAX_ARRAY_SIZE) # Shape: a, max_n
         self.qe = QuantumEfficiency()
-        self.epsilons = np.arange(max_n)
+        self.epsilons = np.arange(max_n+1)
         self.pixel_properties = data_set.get_pixel_properties(True)
-        self.initial = np.zeros(n_outputs)
+        self.fluxes = np.zeros(n_outputs)
         self.data_set_n_frames = data_set.num_frames()
         self.n_outputs = n_outputs
-
         self.blur = blur
+        self.n_epochs_added = 0
+
+        p_epsilon_gamma = self.qe.p_epsilon_gamma[:max_n+1, :max_n+1]
+        gamma, gamma_prime = np.meshgrid(self.epsilons, self.epsilons, indexing="ij")
+        self.p_epsilon_gamma_primes = []
+        for k in range(3):
+            m_gamma_gamma_prime = (-1)**(k + gamma + gamma_prime) * binom(k, gamma - gamma_prime)
+            m_gamma_gamma_prime[gamma_prime > gamma] = 0
+            m_gamma_gamma_prime[gamma_prime < gamma-k] = 0
+            self.p_epsilon_gamma_primes.append(p_epsilon_gamma @ m_gamma_gamma_prime)
 
     def pinv(self, weights):
         if self.blur:
@@ -44,9 +53,11 @@ class Weighter:
             else:
                 return np.transpose(np.linalg.pinv(weights))
         else:
-            cpy = np.copy(weights)
-            cpy[:,1] = 1/cpy[:,1]
-            return cpy
+            output = np.copy(weights)
+            indices = weights[:,0].astype(int)
+            denom = np.bincount(indices, weights=weights[:,1]**2, minlength=self.n_outputs)[indices]
+            output[:,1] = np.where(denom > 0, weights[:,1] / denom, 0.0)
+            return output
         
     def multiply(self, weights, fluxes):
         if self.blur:
@@ -84,83 +95,70 @@ class Weighter:
 
         self.probs_list.concatenate(all_probs)
         self.weights_list.concatenate(weights)
-        self.initial += np.nanmean(image)
+        self.fluxes = (self.fluxes * self.n_epochs_added + self.reverse_multiply(self.pinv(weights), image)) / (self.n_epochs_added + 1)
+        self.n_epochs_added += 1
 
-    def get_fluxes(self):
-        fluxes = self.initial / self.data_set_n_frames
-        fluxes = np.maximum(fluxes, 100) # TODO
+    def get_fluxes(self, n_iterations=1):
+        for iteration in range(n_iterations):
+            frac_shift = self.iterate()
+            print(f"Iteration {iteration+1}: fractional shift of {frac_shift*100:.2f}%")
 
-        # Perform the iterations
-        print("Beginning weight iterations")
-        for iteration in range(10):
-            fluxes = np.maximum(fluxes, 0)
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
+            ax.step(np.arange(len(self.fluxes)), self.fluxes)
+            fig.savefig("fluxes.png")
 
-            gradient = np.zeros(len(fluxes))
-            if self.blur:
-                hessian = np.zeros((len(fluxes)))
-            else:
-                hessian = np.zeros((len(fluxes), len(fluxes)))
+        return self.fluxes
 
-            for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):
-                lambdas = self.multiply(chunk_weights, fluxes)
-                print(np.min(lambdas), np.max(lambdas))
+    def iterate(self):
+        # Perform an iteration
+        self.fluxes = np.maximum(self.fluxes, 0.1) # TODO
+        like = 0
+        gradient = np.zeros(len(self.fluxes))
+        hessian = np.zeros((len(self.fluxes), len(self.fluxes)))
 
-                sum_d0 = np.zeros_like(lambdas)
-                sum_d1 = np.zeros_like(lambdas)
-                sum_d2 = np.zeros_like(lambdas)
-                for epsilon in self.epsilons:
-                    d_lambda = lambdas - self.qe.get_inverse(epsilon)
-                    for n in range(0, MAX_D+1):
-                        prefactor = d_lambda**n / factorial(n)
-                        sum_d0 += chunk_probs[:,epsilon] * prefactor * self.qe.get_d(n, epsilon)
-                        sum_d1 += chunk_probs[:,epsilon] * prefactor * self.qe.get_d(n+1, epsilon)
-                        sum_d2 += chunk_probs[:,epsilon] * prefactor * self.qe.get_d(n+2, epsilon)
-                bad_mask = (~np.isfinite(sum_d0)) | (sum_d0 == 0)
-                grad_summand = sum_d1/sum_d0
-                hess_summand = sum_d2/sum_d0 - grad_summand**2
-                grad_summand[bad_mask] = 0
-                hess_summand[bad_mask] = 0
+        for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):
+            lambdas = self.multiply(chunk_weights, self.fluxes)
+            gamma_grid, lambda_grid = np.meshgrid(self.epsilons, lambdas, indexing="ij")
+            p_gamma_lambdas = lambda_grid**gamma_grid / factorial(gamma_grid)*np.exp(-lambdas)
 
-                gradient += self.reverse_multiply(chunk_weights, grad_summand)
-                hessian += self.reverse_multiply_2(chunk_weights, hess_summand)
+            d0 = np.einsum("ax,xy,ya->a", chunk_probs+0.01, self.p_epsilon_gamma_primes[0], p_gamma_lambdas)
+            d1 = np.einsum("ax,xy,ya->a", chunk_probs+0.01, self.p_epsilon_gamma_primes[1], p_gamma_lambdas)
+            d2 = np.einsum("ax,xy,ya->a", chunk_probs+0.01, self.p_epsilon_gamma_primes[2], p_gamma_lambdas)
 
-            if self.blur:
-                inverse_hessian = np.linalg.inv(hessian)
-            else:
-                inverse_hessian = np.diag(1/np.diagonal(hessian))
+            bad_mask = (~np.isfinite(d0)) | (d0 == 0)
+            grad_summand = d1/d0
+            hess_summand = d2/d0 - grad_summand**2
+            grad_summand[bad_mask] = 0
+            hess_summand[bad_mask] = 0
+            like += np.sum(np.log(d0[~bad_mask]))
 
-            old_fluxes = np.copy(fluxes)
-            fluxes -= inverse_hessian @ gradient
+            gradient += self.reverse_multiply(chunk_weights, grad_summand)
+            hessian += self.reverse_multiply_2(chunk_weights, hess_summand)
 
-            fluxes = self.check_boundaries(fluxes)
+        if self.blur:
+            inverse_hessian = np.linalg.inv(hessian)
+        else:
+            inverse_hessian = np.diag(1/np.diagonal(hessian))
 
-            fractional_shift = np.sqrt(np.nanmean((fluxes - old_fluxes)**2)) / np.abs(np.nanmean(fluxes))
-            print(f"Iteration {iteration+1}: fractional shift of {fractional_shift*100:.2f}%")
-            if fractional_shift < 0.01: break
+        old_fluxes = np.copy(self.fluxes)
+        self.fluxes -= inverse_hessian @ gradient
+        # self.fluxes = self.check_boundaries(self.fluxes)
 
-        return fluxes
+        fractional_shift = np.sqrt(np.nanmean((self.fluxes - old_fluxes)**2)) / np.abs(np.nanmean(old_fluxes))
+        self.fluxes -= np.min(self.fluxes)
+        return fractional_shift
 
     def check_boundaries(self, fluxes):
-        normals = EnormousArray(MAX_ARRAY_SIZE)
         min_lambda = 0
         max_lambda = self.epsilons[-1]
-        norm_dot_norm = 0
-        lambda_dot_norm = 0
-        normal_d = 0
+        shift = np.zeros_like(fluxes)
+        n_chunks = 0
         for chunk_weights in self.weights_list:
             lambdas = self.multiply(chunk_weights, fluxes)
-            minimum_normal = -np.minimum(lambdas, min_lambda)
-            maximum_normal = max_lambda - np.maximum(lambdas, max_lambda)
-            normal = minimum_normal + maximum_normal
-            normal_d += np.sum(max_lambda * maximum_normal)
-            norm_dot_norm += np.sum(normal**2)
-            lambda_dot_norm += normal @ lambdas
-            normals.concatenate(normal)
-        if norm_dot_norm == 0:
-            return fluxes
-        
-        alpha = (normal_d - lambda_dot_norm) / norm_dot_norm
-        shift = np.zeros_like(fluxes)
-        for chunk_weights, chunk_normal in zip(self.weights_list, normals):
-            shift += self.reverse_multiply(self.pinv(chunk_weights), alpha * chunk_normal)
+            normal = -np.minimum(lambdas, min_lambda)
+            normal += max_lambda - np.maximum(lambdas, max_lambda)
+            shift += self.reverse_multiply(self.pinv(chunk_weights), normal)
+            n_chunks += 1
+        shift /= n_chunks
         return fluxes + shift

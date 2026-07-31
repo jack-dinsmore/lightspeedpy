@@ -316,54 +316,54 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
     if psf_image is None:
         psf_image = np.ones(data_set.image_shape)
 
-    if method == "weight":
-        weighter = Weighter(data_set, n_bins, blur=SMEAR_FRAME)
+    # if method == "weight":
+    #     weighter = Weighter(data_set, n_bins, blur=SMEAR_FRAME)
 
-    for frame in data_set:
-        masked_image = frame.image[roi_mask]
+    # for frame in data_set:
+    #     masked_image = frame.image[roi_mask]
         
-        if SMEAR_FRAME:
-            start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
-            end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
-            weights = get_bin_weights(phase_edges, start_phase, end_phase)
-        else:
-            phase = ephemeris.get_phase(frame.timestamp)
-            weights = np.zeros(n_bins)
-            weights[np.digitize(phase, phase_edges)-1] = 1
+    #     if SMEAR_FRAME:
+    #         start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
+    #         end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
+    #         weights = get_bin_weights(phase_edges, start_phase, end_phase)
+    #     else:
+    #         phase = ephemeris.get_phase(frame.timestamp)
+    #         weights = np.zeros(n_bins)
+    #         weights[np.digitize(phase, phase_edges)-1] = 1
 
-        exposures += frame.duration*weights
-        if method == "sum":
-            electrons += np.nansum(masked_image) * weights
-        elif method == "clip":
-            electrons += np.nansum(np.round(masked_image)) * weights
-        elif method == "weight":
-            # Flux means number of photons per frame
-            psf_weights = psf_image[roi_mask]
-            psf_weights /= np.sum(psf_weights)
-            if SMEAR_FRAME:
-                weight_matrix = np.multiply.outer(psf_weights, weights)
-                weighter.add_pixels(masked_image, weight_matrix, roi_mask)
-            else:
-                indices = np.ones(len(masked_image)) * np.argmax(weights)
-                weight_array = np.transpose([indices, psf_weights])
-                weighter.add_pixels(masked_image, weight_array, roi_mask)
-        else:
-            raise Exception(f"Unrecognized method {method}")
+    #     exposures += frame.duration*weights
+    #     if method == "sum":
+    #         electrons += np.nansum(masked_image) * weights
+    #     elif method == "clip":
+    #         electrons += np.nansum(np.round(masked_image)) * weights
+    #     elif method == "weight":
+    #         # Flux means number of photons per frame
+    #         psf_weights = psf_image[roi_mask]
+    #         psf_weights /= np.sum(psf_weights)
+    #         if SMEAR_FRAME:
+    #             weight_matrix = np.multiply.outer(psf_weights, weights)
+    #             weighter.add_pixels(masked_image, weight_matrix, roi_mask)
+    #         else:
+    #             indices = np.ones(len(masked_image)) * np.argmax(weights)
+    #             weight_array = np.transpose([indices, psf_weights])
+    #             weighter.add_pixels(masked_image, weight_array, roi_mask)
+    #     else:
+    #         raise Exception(f"Unrecognized method {method}")
 
-    if method == "weight":
-        import pickle
-        with open("weighter.pkl", 'wb') as f:
-            pickle.dump(weighter, f)
+    # if method == "weight":
+    #     import pickle
+    #     with open("weighter.pkl", 'wb') as f:
+    #         pickle.dump(weighter, f)
 
-    # import pickle
-    # for frame in data_set.iterator(bar_color=None):
-    #     break
-    # with open("weighter.pkl", 'rb') as f:
-    #     weighter = pickle.load(f)
+    import pickle
+    for frame in data_set.iterator(bar_color=None):
+        break
+    with open("weighter.pkl", 'rb') as f:
+        weighter = pickle.load(f)
     # Rmemeber the change to util # TODO
 
     if method == "sum" or method == "clip":
         fluxes = electrons / exposures # Counts per second for total source
     else:
-        fluxes = weighter.get_fluxes() / frame.duration # Counts per second for total source
+        fluxes = weighter.get_fluxes(1) / frame.duration # Counts per second for total source
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

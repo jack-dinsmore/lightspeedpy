@@ -5,6 +5,7 @@ from astropy.time import Time
 from .frame import DataSetIteratorRet
 from .pixel_properties import PixelProperties
 from .qe import QuantumEfficiency
+from .regions import Region, BoxRegion
 
 DEFAULT_TIME = "2025-09-13 06:00:00.00429"
 
@@ -16,6 +17,24 @@ def is_header_equal(h1, h2):
         if h1[key] != h2[key]:
             return False
     return True
+
+def load_bbox(filename, raw_image_shape):
+    region = Region.load(filename)
+    if type(region) is not BoxRegion:
+        raise Exception("The crop region must be an unrotated rectangle")
+    if region.angle != 0:
+        raise Exception("The crop region must be an unrotated rectangle")
+    bbox = [
+        int(region.y - region.w/2),
+        int(region.y + region.w/2),
+        int(region.x - region.l/2),
+        int(region.x + region.l/2),
+    ]
+    bbox[0] = max(bbox[0], 0)
+    bbox[1] = min(bbox[1], raw_image_shape[0]-1)
+    bbox[2] = max(bbox[2], 0)
+    bbox[3] = min(bbox[3], raw_image_shape[1]-1)
+    return bbox
 
 class DataSet:
     """
@@ -33,6 +52,8 @@ class DataSet:
     ----------
     filenames : list of str
         List of files to include
+    bbox: string, optional
+        Region to use for cropping the field of view
 
     max_frames : int, optional
         Maximum number of frames to iterate through. Default: all the frames
@@ -43,7 +64,7 @@ class DataSet:
     cr_thresh: int, optional
         Cosmic ray cutting threshold. Default: 20
     """
-    def __init__(self, filenames, **kwargs):
+    def __init__(self, filenames, bbox=None, **kwargs):
         if len(filenames) == 0:
             raise Exception("You must provide at least one filename")
         
@@ -56,6 +77,13 @@ class DataSet:
             self._get_image_data(hdul)
             self._get_timing_data(hdul)
             self.frames.append(hdul[1].shape[0] * self.frames_per_bundle)
+
+        if bbox is not None:
+            self.bbox = load_bbox(bbox, self.raw_image_shape)
+            self.image_shape = (self.bbox[1] - self.bbox[0], self.bbox[3] - self.bbox[2])
+        else:
+            self.bbox = None
+            self.image_shape = self.raw_image_shape
 
         for filename in self.filenames[1:]:
             with fits.open(filename) as hdul:
@@ -72,7 +100,7 @@ class DataSet:
         self.iter_kwargs = kwargs
         self.auto_bias = False
 
-    def from_first(filename, min_index=None, max_index=None, **kwargs):
+    def from_first(filename, bbox=None, min_index=None, max_index=None, **kwargs):
         """
         Create a :class:`DataSet` for all files in a capture. The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
 
@@ -80,6 +108,12 @@ class DataSet:
         ----------
         filenames : list of str
             List of files to include
+        bbox: string, optional
+            Region to use for cropping the field of view
+        min_index: int, optional
+            Minimum cube index to load
+        bbox: string, optional
+            Maximum cube index to load
 
         max_frames : int, optional
             Maximum number of frames to iterate through. Default: all the frames
@@ -107,9 +141,9 @@ class DataSet:
             raise Exception(f"No filenames with these criteria exist")
         
         filenames = np.array(filenames)[np.argsort(indices)]
-        return DataSet(filenames, **kwargs)
+        return DataSet(filenames, bbox, **kwargs)
     
-    def from_dir(directory, **kwargs):
+    def from_dir(directory, bbox=None, **kwargs):
         """
         Create a :class:`DataSet` for all files in a directory. The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
 
@@ -125,6 +159,8 @@ class DataSet:
             Cut cosmic rays. Default: True
         cr_thresh: int, optional
             Cosmic ray cutting threshold. Default: 20
+        bbox: string, optional
+            Region to use for cropping the field of view
         """
         if not os.path.exists(directory):
             raise Exception(f"The directory {directory} does not exist")
@@ -137,7 +173,7 @@ class DataSet:
         if len(filenames) == 0:
             raise Exception(f"The directory contained no FITS files")
         
-        return DataSet(filenames, **kwargs)
+        return DataSet(filenames, bbox, **kwargs)
     
     def iterator(self, **kwargs):
         """
@@ -230,7 +266,7 @@ class DataSet:
         else:
             self.frames_per_bundle = int(hdul[1].header["HIERARCH FRAMEBUNDLE NUMBER"])
 
-        self.image_shape = (hdul[1].data.shape[1]//self.frames_per_bundle, hdul[1].data.shape[2])
+        self.raw_image_shape = (hdul[1].data.shape[1]//self.frames_per_bundle, hdul[1].data.shape[2])
 
     def _get_timing_data(self, hdul):
         # Get timing data for this fileset. Note: this function should only be called on the first cube. _get_image_data has to be run first
@@ -308,6 +344,10 @@ class DataSet:
                     raise Exception("The bias you passed did not calculate the noise distribution, but the analysis method you requested requires it")
             else:
                 self._pixel_properties = PixelProperties.from_bias(self.bias, self, noise_distro)
+
+            if self.bbox is not None:
+                self._pixel_properties.crop(self.bbox)
+
         return self._pixel_properties
     
     def set_bias(self, bias):
@@ -325,6 +365,8 @@ class DataSet:
             self.bias = bias
         else:
             self._pixel_properties = bias
+            if self.bbox is not None:
+                self._pixel_properties.crop(self.bbox)
             self.bias = None
 
     def set_dark(self, dark_data_set):
@@ -337,6 +379,8 @@ class DataSet:
             A :class:`DataSet` containing the dark observation
         """
         self.dark = dark_data_set.stack() / dark_data_set.seconds_per_frame
+        if self.bbox is not None:
+            self.dark = self.dark[self.bbox[0]:self.bbox[1],self.bbox[2]:self.bbox[3]]
 
     def set_flat(self, flat_data_set):
         """
@@ -350,3 +394,5 @@ class DataSet:
         self.flat = flat_data_set.stack()
         self.flat /= QuantumEfficiency()(self.flat)
         self.flat /= np.nanmax(self.flat)
+        if self.bbox is not None:
+            self.flat = self.flat[self.bbox[0]:self.bbox[1],self.bbox[2]:self.bbox[3]]

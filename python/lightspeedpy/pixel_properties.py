@@ -31,6 +31,11 @@ class PixelProperties:
     def has_noise_distro(self):
         return self.params is not None
 
+    def crop(self, bbox):
+        self.params = self.params[bbox[0]:bbox[1],bbox[2]:bbox[3],:]
+        self.bias = self.bias[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+        self.widths = self.widths[bbox[0]:bbox[1],bbox[2]:bbox[3]]
+
     def save(self, filename, clobber):
         """
         Save the pixel properties to a file

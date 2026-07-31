@@ -37,12 +37,14 @@ def make_on_off(data_set, ephemeris, phase_string, method):
     """
     on_range, off_range = get_range(phase_string)
 
+    n_pixels = np.prod(data_set.image_shape)
     on_image = np.zeros(data_set.image_shape)
     on_n_frames = np.zeros(data_set.image_shape)
     off_image = np.zeros(data_set.image_shape)
     off_n_frames = np.zeros(data_set.image_shape)
-    on_weighter = Weighter(data_set, one_to_one=True)
-    off_weighter = Weighter(data_set, one_to_one=True)
+    if method == "weight":
+        on_weighter = Weighter(data_set, n_pixels, blur=False)
+        off_weighter = Weighter(data_set, n_pixels, blur=False)
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
@@ -54,7 +56,9 @@ def make_on_off(data_set, ephemeris, phase_string, method):
             elif method == "clip":
                 on_image[good_mask] += np.round(masked_image)
             elif method == "weight":
-                on_weighter.add_pixels(masked_image, np.where(good_mask.reshape(-1))[0], good_mask)
+                indices = np.arange(n_pixels)
+                weight_array = np.transpose([indices, np.ones(n_pixels)])
+                on_weighter.add_pixels(masked_image, weight_array, good_mask)
             else:
                 raise Exception(f"Unrecognized method {method}")
             on_n_frames[good_mask] += 1
@@ -65,14 +69,18 @@ def make_on_off(data_set, ephemeris, phase_string, method):
             elif method == "clip":
                 off_image[good_mask] += np.round(masked_image)
             elif method == "weight":
-                off_weighter.add_pixels(masked_image, np.where(good_mask.reshape(-1))[0], good_mask)
+                indices = np.arange(n_pixels)
+                weight_array = np.transpose([indices, np.ones(n_pixels)])
+                off_weighter.add_pixels(masked_image, weight_array, good_mask)
             else:
                 raise Exception(f"Unrecognized method {method}")
             off_n_frames[good_mask] += 1
 
     if method == "weight":
-        on_image = on_weighter.get_fluxes().reshape(data_set.image_shape)
-        off_image = off_weighter.get_fluxes().reshape(data_set.image_shape)
+        # One needs to multiply by the number of frames since weighting calculates the mean value and the other methods compute the sum.
+        on_image = on_weighter.get_fluxes().reshape(data_set.image_shape) * on_n_frames
+        off_image = off_weighter.get_fluxes().reshape(data_set.image_shape) * off_n_frames
+
 
     on = Image(on_image, data_set, on_n_frames)
     off = Image(off_image, data_set, off_n_frames)

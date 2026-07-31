@@ -92,9 +92,8 @@ class EnormousArray:
         return EnormousArrayIterator(self.filenames)
     
     def __del__(self):
-        pass # TODO
-        # for filename in self.filenames:
-        #     os.remove(filename)
+        for filename in self.filenames:
+            os.remove(filename)
 
 class EnormousArrayIterator:
     def __init__(self, filenames):

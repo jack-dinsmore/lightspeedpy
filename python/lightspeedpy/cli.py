@@ -18,10 +18,11 @@ def get_dataset(args):
     
     min_index = None if args.min_index is None else int(args.min_index)
     max_index = None if args.max_index is None else int(args.max_index)
+    bbox = None if args.bbox is None else args.bbox
     kwargs = {}
     if args.allow_cr:
         kwargs["cut_cr"] = False
-    data_set = DataSet.from_first(args.input, min_index=min_index, max_index=max_index, **kwargs)
+    data_set = DataSet.from_first(args.input, bbox=bbox, min_index=min_index, max_index=max_index, **kwargs)
     data_set.apply_timing_offset(args.timing_offset)
 
     print("Loaded files")
@@ -84,3 +85,4 @@ def add_dataset_args(parser):
     parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser.add_argument("--allow-cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--bbox", help="Rectangular region to use as the region of interest")

@@ -23,6 +23,7 @@ class DataSetIterator:
         self.first_run = True
         self.total_frame_index = 0
         self.cr_thresh = cr_thresh
+        self.bias = self.data_set.get_pixel_properties(False).bias
 
         self._renew_file()
         n_frames = data_set.num_frames()
@@ -69,15 +70,17 @@ class DataSetIterator:
         self.first_run = False
 
         # Get the frame
-        start_pixel = self.data_set.image_shape[0] * self.frame_index
-        image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.image_shape[0]), :]
-
+        start_pixel = self.data_set.raw_image_shape[0] * self.frame_index
+        image = self.open_file[1].data[self.bundle_index, start_pixel:(start_pixel+self.data_set.raw_image_shape[0]), :]
+        
+        if self.data_set.bbox is not None:
+            image = image[self.data_set.bbox[0]:self.data_set.bbox[1],self.data_set.bbox[2]:self.data_set.bbox[3]]
 
         is_saturated = np.max(image) >= 65_535
         image = image.astype(float)
         image -= 199.5
         image /= ADU_PER_ELECTRON
-        image -= self.data_set.get_pixel_properties(False).bias
+        image -= self.bias
 
         if self.data_set.dark is not None:
             image -= self.data_set.dark * self.data_set.seconds_per_frame

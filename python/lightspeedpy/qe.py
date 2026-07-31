@@ -26,7 +26,7 @@ class QuantumEfficiency:
     def _get_p_epsilon_gamma(self):
         if not os.path.exists(P_EPSILON_GAMMA_LOCATION):
             p_epsilon_gamma = np.zeros((MAX_ELECTRONS, MAX_ELECTRONS))
-            for gamma in tqdm(range(MAX_CALC_N), colour="green"):
+            for gamma in tqdm.tqdm(range(MAX_CALC_N), colour="green"):
                 n_caught = np.zeros(TRAP_N+1)
                 n_trial = 50_000
                 sites_used = np.zeros((n_trial, TRAP_N), bool)

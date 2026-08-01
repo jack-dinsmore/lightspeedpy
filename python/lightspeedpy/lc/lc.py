@@ -53,7 +53,7 @@ def delta_phase(phase_start, phase_end):
     else:
         return 1 - (phase_start - phase_end)
 
-def make_bootstrap_lc(seed, data_set_orig, ephemeris, roi, psf_image, args):
+def make_bootstrap_lc(seed, data_set_orig, roi, ephemeris, args, psf_image):
     """
     Get a light curve from a randomly drawn boostrapped sample of the data set
     """
@@ -95,7 +95,7 @@ def get_lc(args):
         else:
             params = []
             for _ in range(N_LCS):
-                params.append([np.random.randint(2**32), data_set, ephemeris, roi, psf_image, args])
+                params.append([np.random.randint(2**32), data_set, roi, ephemeris, args, psf_image])
             with Pool() as pool:
                 lcs = pool.starmap(make_bootstrap_lc, params)
             lc = accumulate_boostrap_lcs(lcs)

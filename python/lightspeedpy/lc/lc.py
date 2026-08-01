@@ -1,6 +1,6 @@
 import numpy as np
 from astropy.io import fits
-import copy
+import copy, os
 from multiprocessing import Pool
 from ..cli import get_dataset
 from ..regions import Region, CircleRegion, EllipseRegion
@@ -53,7 +53,7 @@ def delta_phase(phase_start, phase_end):
     else:
         return 1 - (phase_start - phase_end)
 
-def get_bootstrap_instance(seed, data_set_orig, ephemeris, roi, psf_image, args):
+def make_bootstrap_lc(seed, data_set_orig, ephemeris, roi, psf_image, args):
     """
     Get a light curve from a randomly drawn boostrapped sample of the data set
     """
@@ -83,37 +83,63 @@ def get_lc(args):
         else:
             raise Exception("PSF weighting can only be performed with elliptical or circular regions")
 
+    is_slurm = False
     if args.errors is None:
         lc = make_lc(data_set, roi, ephemeris, args, psf_image)
-    else:       
-        params = []
-        for _ in range(N_LCS):
-            params.append([np.random.randint(2**32), data_set, ephemeris, roi, psf_image, args])
-        
-        with Pool() as pool:
-            lcs = pool.starmap(get_bootstrap_instance, params)
-
-        lc_m0 = np.zeros_like(lcs[0].flux)
-        lc_m1 = np.zeros_like(lcs[0].flux)
-        lc_m2 = np.zeros_like(lcs[0].flux)
-        for lc in lcs:
-            lc_m0 += lc.exposures
-            lc_m1 += lc.flux * lc.exposures
-            lc_m2 += lc.flux * lc.flux * lc.exposures
-        lc_m1 /= lc_m0
-        lc_m2 /= lc_m0
-        lc_std = np.sqrt(lc_m2 - lc_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
-
-        main_lc = lcs[0]
-        main_lc.exposures = lc_m0 / N_LCS
-        main_lc.flux = lc_m1 * main_lc.exposures
-        main_lc.errors = lc_std * main_lc.exposures
-        lc = main_lc
+        save_name = args.output
+    else:
+        if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
+            lc = make_bootstrap_lc(data_set, roi, ephemeris, args, psf_image)
+            save_name = f"{args.output[:-5]}-{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
+            is_slurm = True
+        else:
+            params = []
+            for _ in range(N_LCS):
+                params.append([np.random.randint(2**32), data_set, ephemeris, roi, psf_image, args])
+            with Pool() as pool:
+                lcs = pool.starmap(make_bootstrap_lc, params)
+            lc = accumulate_boostrap_lcs(lcs)
+            save_name = args.output
 
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
-    lc.save(args.output, args.clobber, save_kwargs)
+    lc.save(save_name, args.clobber, save_kwargs)
 
+    # Perform last step of SLURM light curve addition
+    if is_slurm:
+        lcs = []
+        for task_id in range(1, os.environ["SLURM_ARRAY_TASK_COUNT"]+1):
+            filename = f"{args.output[:-5]}-{task_id}.fits"
+            if not os.path.exists(filename):
+                # Not all the threads have finished yet
+                return
+            lcs.append(Lightcurve.load(filename))
+
+        # Save the accumulated light curve
+        lc = accumulate_boostrap_lcs(lcs)
+        lc.save(args.output, args.clobber, save_kwargs)
+        
+
+def accumulate_boostrap_lcs(lcs):
+    """
+    Accumulate bootstrapped LCs into one LC with errors
+    """
+    lc_m0 = np.zeros_like(lcs[0].flux)
+    lc_m1 = np.zeros_like(lcs[0].flux)
+    lc_m2 = np.zeros_like(lcs[0].flux)
+    for lc in lcs:
+        lc_m0 += lc.exposures
+        lc_m1 += lc.flux * lc.exposures
+        lc_m2 += lc.flux * lc.flux * lc.exposures
+    lc_m1 /= lc_m0
+    lc_m2 /= lc_m0
+    lc_std = np.sqrt(lc_m2 - lc_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
+
+    main_lc = lcs[0]
+    main_lc.exposures = lc_m0 / N_LCS
+    main_lc.flux = lc_m1 * main_lc.exposures
+    main_lc.errors = lc_std * main_lc.exposures
+    return main_lc
 
 def add_lc(args):
     """

@@ -90,7 +90,7 @@ def get_lc(args):
     else:
         if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
             lc = make_bootstrap_lc(None, data_set, roi, ephemeris, args, psf_image)
-            save_name = f"{args.output[:-5]}-{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
+            save_name = f"{args.output[:-5]}/{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
             is_slurm = True
         else:
             params = []
@@ -108,8 +108,8 @@ def get_lc(args):
     # Perform last step of SLURM light curve addition
     if is_slurm:
         lcs = []
-        for task_id in range(1, os.environ["SLURM_ARRAY_TASK_COUNT"]+1):
-            filename = f"{args.output[:-5]}-{task_id}.fits"
+        for task_id in range(1, int(os.environ["SLURM_ARRAY_TASK_COUNT"])+1):
+            filename = f"{args.output[:-5]}/{task_id}.fits"
             if not os.path.exists(filename):
                 # Not all the threads have finished yet
                 return

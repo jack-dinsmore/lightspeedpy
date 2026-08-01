@@ -84,7 +84,6 @@ class EnormousArray:
         while filename is None or os.path.exists(filename):
             name = np.random.randint(2**24)
             filename = f"{TMP_LOCATION}/tmp-{name}.npy"
-            print(filename)
         np.save(filename, self.data)
         self.filenames.append(filename)
         self.data = []

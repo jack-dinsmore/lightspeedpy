@@ -236,7 +236,7 @@ class DataSet:
                 for j in range(start, stop+1):
                     print(sorted_filenames[j], f"({sorted_frames[j]} frames)")
 
-    def bootstrap(self, seed):
+    def bootstrap(self, seed=None):
         """
         Resamples the file names for use in bootstrapping. If you want to estimate uncertainties, redo your analysis with many :meth:`DataSet.bootstrap`'ed data sets and calculate the standard deviation of your results.
 
@@ -244,7 +244,8 @@ class DataSet:
         -----
         You should never bootstrap a data set twice. Instead, you should always create a copy of the original data set with copy.deepcopy and then bootstrap the copy.
         """
-        np.random.seed(seed)
+        if seed is not None:
+            np.random.seed(seed)
         indices = np.random.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
         self.filenames = self.filenames[indices]
         self.frames = self.frames[indices]

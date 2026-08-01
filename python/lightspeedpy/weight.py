@@ -31,7 +31,6 @@ class Weighter:
         self.n_outputs = n_outputs
         self.blur = blur
         self.n_epochs_added = 0
-        print(f"USING {max_n} ELECTRONS")
 
         p_epsilon_gamma = self.qe.p_epsilon_gamma[:max_n+1, :max_n+1]
         gamma, gamma_prime = np.meshgrid(self.epsilons, self.epsilons, indexing="ij")

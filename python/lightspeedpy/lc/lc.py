@@ -90,6 +90,8 @@ def get_lc(args):
     else:
         if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
             lc = make_bootstrap_lc(None, data_set, roi, ephemeris, args, psf_image)
+            if not os.path.exists(args.output[:-5]):
+                os.mkdir(args.output[:-5])
             save_name = f"{args.output[:-5]}/{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
             is_slurm = True
         else:

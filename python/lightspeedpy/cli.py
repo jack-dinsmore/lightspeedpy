@@ -86,3 +86,5 @@ def add_dataset_args(parser):
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser.add_argument("--allow-cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)
     parser.add_argument("--bbox", help="Rectangular region to use as the region of interest")
+    parser.add_argument("--n-iterations", type=int, default=25, help="(Weight method) Number of iterations to use")
+    parser.add_argument("--n-electrons", type=int, default=3, help="(Weight method) Number of electrons to simulate. Should be larger than the expected electrons per pixel.")

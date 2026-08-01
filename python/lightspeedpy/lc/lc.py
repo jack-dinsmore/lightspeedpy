@@ -8,8 +8,8 @@ from ..ephemeris import Ephemeris
 from ..constants import FORBIDDEN_KEYWORDS
 from ..weight import Weighter
 
-MAX_N_SCALE = 2
 SMEAR_FRAME = False # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
+N_LCS = 8 # Number of LCs to use for boostrapped errors
 
 def make_psf_image(data_set, reg_file):
     """
@@ -59,7 +59,7 @@ def get_bootstrap_instance(seed, data_set_orig, ephemeris, roi, psf_image, args)
     """
     data_set = copy.deepcopy(data_set_orig)
     data_set.bootstrap(seed)
-    lc = make_lc(data_set, args.bins, roi, ephemeris, args.mode, psf_image)
+    lc = make_lc(data_set, roi, ephemeris, args, psf_image)
     return lc
 
 def get_lc(args):
@@ -84,10 +84,8 @@ def get_lc(args):
             raise Exception("PSF weighting can only be performed with elliptical or circular regions")
 
     if args.errors is None:
-        lc = make_lc(data_set, args.bins, roi, ephemeris, args.mode, psf_image)
-    else:
-        N_LCS = 8 # TODO
-        
+        lc = make_lc(data_set, roi, ephemeris, args, psf_image)
+    else:       
         params = []
         for _ in range(N_LCS):
             params.append([np.random.randint(2**32), data_set, ephemeris, roi, psf_image, args])
@@ -283,7 +281,7 @@ def get_bin_weights(phase_edges, start_phase, end_phase):
     
     return weights
 
-def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
+def make_lc(data_set, roi, ephemeris, args, psf_image=None):
     """
     Get the light curve of a source by summing all the detected photons per frame
     
@@ -308,6 +306,7 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
         The light curve object, corrected for quantum efficiency
     """
 
+    n_bins = args.bins
     electrons = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
     phase_edges = np.linspace(0, 1, n_bins+1)
@@ -316,11 +315,12 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
     if psf_image is None:
         psf_image = np.ones(data_set.image_shape)
 
-    if method == "weight":
-        weighter = Weighter(data_set, n_bins, blur=SMEAR_FRAME)
+    if args.mode == "weight":
+        weighter = Weighter(data_set, n_bins, args.n_electrons, blur=SMEAR_FRAME)
 
     for frame in data_set:
-        masked_image = frame.image[roi_mask]
+        mask = roi_mask & np.isfinite(frame.image)
+        masked_image = frame.image[mask]
         
         if SMEAR_FRAME:
             start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
@@ -332,26 +332,26 @@ def make_lc(data_set, n_bins, roi, ephemeris, method, psf_image=None):
             weights[np.digitize(phase, phase_edges)-1] = 1
 
         exposures += frame.duration*weights
-        if method == "sum":
+        if args.mode == "sum":
             electrons += np.nansum(masked_image) * weights
-        elif method == "clip":
+        elif args.mode == "clip":
             electrons += np.nansum(np.round(masked_image)) * weights
-        elif method == "weight":
+        elif args.mode == "weight":
             # Flux means number of photons per frame
-            psf_weights = psf_image[roi_mask]
+            psf_weights = psf_image[mask]
             psf_weights /= np.sum(psf_weights)
             if SMEAR_FRAME:
                 weight_matrix = np.multiply.outer(psf_weights, weights)
-                weighter.add_pixels(masked_image, weight_matrix, roi_mask)
+                weighter.add_pixels(masked_image, weight_matrix, mask)
             else:
                 indices = np.ones(len(masked_image)) * np.argmax(weights)
                 weight_array = np.transpose([indices, psf_weights])
-                weighter.add_pixels(masked_image, weight_array, roi_mask)
+                weighter.add_pixels(masked_image, weight_array, mask)
         else:
-            raise Exception(f"Unrecognized method {method}")
+            raise Exception(f"Unrecognized method {args.mode}")
 
-    if method == "sum" or method == "clip":
+    if args.mode == "sum" or args.mode == "clip":
         fluxes = electrons / exposures # Counts per second for total source
     else:
-        fluxes = weighter.get_fluxes(1) / frame.duration # Counts per second for total source
+        fluxes = weighter.get_fluxes(args.n_iterations) / frame.duration # Counts per second for total source
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

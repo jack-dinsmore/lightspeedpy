@@ -244,8 +244,8 @@ class DataSet:
         -----
         You should never bootstrap a data set twice. Instead, you should always create a copy of the original data set with copy.deepcopy and then bootstrap the copy.
         """
-        rng = np.random.default_rng(seed)
-        indices = rng.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
+        np.random.seed(seed)
+        indices = np.random.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
         self.filenames = self.filenames[indices]
         self.frames = self.frames[indices]
 

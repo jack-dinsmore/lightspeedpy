@@ -74,7 +74,7 @@ class EnormousArray:
     def concatenate(self, items):
         self.data += list(items)
         if self.max_data_len is None:
-            self.max_data_len = int(1e9 / np.array(item).nbytes)
+            self.max_data_len = int(1e9 / np.array(items).nbytes)
         if len(self.data) > self.max_data_len:
             self.finish()
     
@@ -82,7 +82,9 @@ class EnormousArray:
         if len(self.data) == 0: return
         filename = None
         while filename is None or os.path.exists(filename):
-            filename = f"{TMP_LOCATION}/tmp-{np.random.randint(2**24)}.npy"
+            name = np.random.randint(2**24)
+            filename = f"{TMP_LOCATION}/tmp-{name}.npy"
+            print(filename)
         np.save(filename, self.data)
         self.filenames.append(filename)
         self.data = []

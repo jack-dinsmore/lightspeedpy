@@ -20,7 +20,7 @@ class Weighter:
     blur : bool, optional
         Set to False to guarantee that each pixel contributes to only one flux value. If you set this flag, then the weights you pass to add_pixels needs to be a tuple of the flux indices and the weight value.
     """
-    def __init__(self, data_set, n_outputs, max_n=1, blur=True):
+    def __init__(self, data_set, n_outputs, max_n=5, blur=True):
         self.weights_list = EnormousArray(MAX_ARRAY_SIZE) # Stores the w_{ai} matrix. Shape: a, i
         self.probs_list = EnormousArray(MAX_ARRAY_SIZE) # Shape: a, max_n
         self.qe = QuantumEfficiency()
@@ -31,6 +31,7 @@ class Weighter:
         self.n_outputs = n_outputs
         self.blur = blur
         self.n_epochs_added = 0
+        print(f"USING {max_n} ELECTRONS")
 
         p_epsilon_gamma = self.qe.p_epsilon_gamma[:max_n+1, :max_n+1]
         gamma, gamma_prime = np.meshgrid(self.epsilons, self.epsilons, indexing="ij")
@@ -98,10 +99,13 @@ class Weighter:
         self.fluxes = (self.fluxes * self.n_epochs_added + self.reverse_multiply(self.pinv(weights), image)) / (self.n_epochs_added + 1)
         self.n_epochs_added += 1
 
-    def get_fluxes(self, n_iterations=1):
+    def get_fluxes(self, n_iterations=10):
+        self.fluxes = np.ones_like(self.fluxes)
         for iteration in range(n_iterations):
             frac_shift = self.iterate()
             print(f"Iteration {iteration+1}: fractional shift of {frac_shift*100:.2f}%")
+            if frac_shift < 0.01:
+                break
 
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots()
@@ -112,7 +116,8 @@ class Weighter:
 
     def iterate(self):
         # Perform an iteration
-        self.fluxes = np.maximum(self.fluxes, 0.1) # TODO
+        self.fluxes = np.maximum(self.fluxes, 1e-5)
+        self.fluxes[np.isnan(self.fluxes)] = 1
         like = 0
         gradient = np.zeros(len(self.fluxes))
         hessian = np.zeros((len(self.fluxes), len(self.fluxes)))
@@ -122,9 +127,9 @@ class Weighter:
             gamma_grid, lambda_grid = np.meshgrid(self.epsilons, lambdas, indexing="ij")
             p_gamma_lambdas = lambda_grid**gamma_grid / factorial(gamma_grid)*np.exp(-lambdas)
 
-            d0 = np.einsum("ax,xy,ya->a", chunk_probs+0.01, self.p_epsilon_gamma_primes[0], p_gamma_lambdas)
-            d1 = np.einsum("ax,xy,ya->a", chunk_probs+0.01, self.p_epsilon_gamma_primes[1], p_gamma_lambdas)
-            d2 = np.einsum("ax,xy,ya->a", chunk_probs+0.01, self.p_epsilon_gamma_primes[2], p_gamma_lambdas)
+            d0 = np.einsum("ax,xy,ya->a", chunk_probs, self.p_epsilon_gamma_primes[0], p_gamma_lambdas)
+            d1 = np.einsum("ax,xy,ya->a", chunk_probs, self.p_epsilon_gamma_primes[1], p_gamma_lambdas)
+            d2 = np.einsum("ax,xy,ya->a", chunk_probs, self.p_epsilon_gamma_primes[2], p_gamma_lambdas)
 
             bad_mask = (~np.isfinite(d0)) | (d0 == 0)
             grad_summand = d1/d0
@@ -146,7 +151,6 @@ class Weighter:
         # self.fluxes = self.check_boundaries(self.fluxes)
 
         fractional_shift = np.sqrt(np.nanmean((self.fluxes - old_fluxes)**2)) / np.abs(np.nanmean(old_fluxes))
-        self.fluxes -= np.min(self.fluxes)
         return fractional_shift
 
     def check_boundaries(self, fluxes):

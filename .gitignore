@@ -2,8 +2,9 @@ Cargo.lock
 target/
 data/moments.npy
 __pycache__/
-tmp/
-rust-files
+tmp
+tests/
+rust-files/
 
 *.so
 *.egg-info

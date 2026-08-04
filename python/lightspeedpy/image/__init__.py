@@ -1,5 +1,5 @@
-from .image import *
+from .image import Image, make_image
 
 # Description: A utility to generate stacked, bias/flat/dark-corrected images.
 
-__all__ = ["get_summed_image", "get_clipped_image", "get_weighted_image_linearized"]
+__all__ = ["Image", "make_image"]

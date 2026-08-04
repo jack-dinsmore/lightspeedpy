@@ -3,8 +3,6 @@ from scipy.special import factorial, binom
 from .qe import QuantumEfficiency, MAX_D
 from .util import EnormousArray
 
-MAX_ARRAY_SIZE = 5_000_000
-
 class Weighter:
     """
     A class to perform weighted analyses. After initialization, add pixels using the add_pixels method and perform the fit using get_fluxes.
@@ -20,14 +18,13 @@ class Weighter:
     blur : bool, optional
         Set to False to guarantee that each pixel contributes to only one flux value. If you set this flag, then the weights you pass to add_pixels needs to be a tuple of the flux indices and the weight value.
     """
-    def __init__(self, data_set, n_outputs, max_n=5, blur=True):
-        self.weights_list = EnormousArray(MAX_ARRAY_SIZE) # Stores the w_{ai} matrix. Shape: a, i
-        self.probs_list = EnormousArray(MAX_ARRAY_SIZE) # Shape: a, max_n
+    def __init__(self, data_set, n_outputs, max_n, blur=True):
+        self.weights_list = EnormousArray() # Stores the w_{ai} matrix. Shape: a, i
+        self.probs_list = EnormousArray() # Shape: a, max_n
         self.qe = QuantumEfficiency()
         self.epsilons = np.arange(max_n+1)
         self.pixel_properties = data_set.get_pixel_properties(True)
         self.fluxes = np.zeros(n_outputs)
-        self.data_set_n_frames = data_set.num_frames()
         self.n_outputs = n_outputs
         self.blur = blur
         self.n_epochs_added = 0
@@ -40,6 +37,12 @@ class Weighter:
             m_gamma_gamma_prime[gamma_prime > gamma] = 0
             m_gamma_gamma_prime[gamma_prime < gamma-k] = 0
             self.p_epsilon_gamma_primes.append(p_epsilon_gamma @ m_gamma_gamma_prime)
+
+    def clear(self):
+        self.weights_list.clear()
+        self.probs_list.clear()
+        self.fluxes *= 0
+        self.n_epochs_added = 0
 
     def pinv(self, weights):
         if self.blur:
@@ -94,6 +97,7 @@ class Weighter:
         all_probs = np.array([self.pixel_properties.get_prob(image, n, mask) for n in self.epsilons]).transpose()
 
         self.probs_list.concatenate(all_probs)
+        self.weights_list.max_data_len = self.probs_list.max_data_len
         self.weights_list.concatenate(weights)
         self.fluxes = (self.fluxes * self.n_epochs_added + self.reverse_multiply(self.pinv(weights), image)) / (self.n_epochs_added + 1)
         self.n_epochs_added += 1

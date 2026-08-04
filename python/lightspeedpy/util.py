@@ -74,7 +74,7 @@ class EnormousArray:
     def concatenate(self, items):
         self.data += list(items)
         if self.max_data_len is None:
-            self.max_data_len = int(1e9 / np.array(items).nbytes)
+            self.max_data_len = int(1e9 / np.array(items[0]).nbytes)
         if len(self.data) > self.max_data_len:
             self.finish()
     

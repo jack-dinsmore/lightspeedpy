@@ -59,7 +59,7 @@ def make_bootstrap_lc(seed, data_set_orig, roi, ephemeris, args, psf_image):
     """
     data_set = copy.deepcopy(data_set_orig)
     data_set.bootstrap(seed)
-    lc = make_lc(data_set, roi, ephemeris, args, psf_image)
+    lc = make_lc(data_set, roi, ephemeris, args.bins, args.mode, psf_image, args.n_electrons, args.n_iterations)
     return lc
 
 def get_lc(args):
@@ -85,12 +85,13 @@ def get_lc(args):
 
     is_slurm = False
     if args.errors is None:
-        lc = make_lc(data_set, roi, ephemeris, args, psf_image)
+        lc = make_lc(data_set, roi, ephemeris, args.bins, args.mode, psf_image, args.n_electrons, args.n_iterations)
+
         save_name = args.output
     else:
         if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
             lc = make_bootstrap_lc(None, data_set, roi, ephemeris, args, psf_image)
-            if not os.path.exists(args.output[:-5]):
+            if not os.path.exists(args.outputw[:-5]):
                 os.mkdir(args.output[:-5])
             save_name = f"{args.output[:-5]}/{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
             is_slurm = True
@@ -197,6 +198,14 @@ class Lightcurve:
         return Lightcurve(edges, flux, exposures, eph.nu, data_set.header0, data_set.header1, duration)
 
     def load(filename):
+        """
+        Load a light curve from a fits file
+        
+        Parameters
+        ----------
+        filename : str
+            Name of the light curve file
+        """
         with fits.open(filename) as hdul:
             header0 = hdul[0].header
             header1 = hdul[1].header
@@ -309,7 +318,7 @@ def get_bin_weights(phase_edges, start_phase, end_phase):
     
     return weights
 
-def make_lc(data_set, roi, ephemeris, args, psf_image=None):
+def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=3, n_iterations=25):
     """
     Get the light curve of a source by summing all the detected photons per frame
     
@@ -325,26 +334,25 @@ def make_lc(data_set, roi, ephemeris, args, psf_image=None):
         The source ephemeris
     method : str
         Either "sum", "clip", or "weight", specifying the method of LC generation
-    psf_image : array (optional)
+    psf_image : array, optional
         PSF image used for weighting. The image is only used when doing pixel weighting.
     
     Returns
     -------
     Lightcurve
-        The light curve object, corrected for quantum efficiency
+        The light curve object, corrected for internal quantum efficiency
     """
 
-    n_bins = args.bins
     electrons = np.zeros(n_bins)
     exposures = np.zeros(n_bins)
     phase_edges = np.linspace(0, 1, n_bins+1)
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
-    roi_mask = roi.check_inside_absolute(xs, ys)
+    roi_mask = roi.contains(xs, ys)
     if psf_image is None:
         psf_image = np.ones(data_set.image_shape)
 
-    if args.mode == "weight":
-        weighter = Weighter(data_set, n_bins, args.n_electrons, blur=SMEAR_FRAME)
+    if mode == "weight":
+        weighter = Weighter(data_set, n_bins, n_electrons, blur=SMEAR_FRAME)
 
     for frame in data_set:
         mask = roi_mask & np.isfinite(frame.image)
@@ -360,11 +368,11 @@ def make_lc(data_set, roi, ephemeris, args, psf_image=None):
             weights[np.digitize(phase, phase_edges)-1] = 1
 
         exposures += frame.duration*weights
-        if args.mode == "sum":
+        if mode == "sum":
             electrons += np.nansum(masked_image) * weights
-        elif args.mode == "clip":
+        elif mode == "clip":
             electrons += np.nansum(np.round(masked_image)) * weights
-        elif args.mode == "weight":
+        elif mode == "weight":
             # Flux means number of photons per frame
             psf_weights = psf_image[mask]
             psf_weights /= np.sum(psf_weights)
@@ -376,10 +384,10 @@ def make_lc(data_set, roi, ephemeris, args, psf_image=None):
                 weight_array = np.transpose([indices, psf_weights])
                 weighter.add_pixels(masked_image, weight_array, mask)
         else:
-            raise Exception(f"Unrecognized method {args.mode}")
+            raise Exception(f"Unrecognized method {mode}")
 
-    if args.mode == "sum" or args.mode == "clip":
+    if mode == "sum" or mode == "clip":
         fluxes = electrons / exposures # Counts per second for total source
     else:
-        fluxes = weighter.get_fluxes(args.n_iterations) / frame.duration # Counts per second for total source
+        fluxes = weighter.get_fluxes(n_iterations) / frame.duration # Counts per second for total source
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

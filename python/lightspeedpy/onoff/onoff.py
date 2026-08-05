@@ -15,7 +15,7 @@ def contains_phase(rang, phase):
     else:
         return (rang[0] < phase) or (phase < rang[1])
 
-def make_on_off(data_set, ephemeris, phase_string, method):
+def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterations=25):
     """
     Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame.
     
@@ -27,8 +27,8 @@ def make_on_off(data_set, ephemeris, phase_string, method):
         The ephemeris for which to load 
     phase_string : str
         The string which encodes the phase range. Remember it's formatted as low:high,low_high, where the first section is the on range and the second is the off range.
-    method : str
-        Either "sum", "clip", or "weight", specifying the method of image generation
+    mode : str
+        Either "sum", "clip", or "weight", specifying the mode of image generation
 
     Returns
     -------
@@ -42,44 +42,44 @@ def make_on_off(data_set, ephemeris, phase_string, method):
     on_n_frames = np.zeros(data_set.image_shape)
     off_image = np.zeros(data_set.image_shape)
     off_n_frames = np.zeros(data_set.image_shape)
-    if method == "weight":
-        on_weighter = Weighter(data_set, n_pixels, blur=False)
-        off_weighter = Weighter(data_set, n_pixels, blur=False)
+    if mode == "weight":
+        on_weighter = Weighter(data_set, n_pixels, n_electrons, blur=False)
+        off_weighter = Weighter(data_set, n_pixels, n_electrons, blur=False)
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
         masked_image = frame.image[good_mask]
         phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
         if contains_phase(on_range, phase):
-            if method == "sum":
+            if mode == "sum":
                 on_image[good_mask] += masked_image
-            elif method == "clip":
+            elif mode == "clip":
                 on_image[good_mask] += np.round(masked_image)
-            elif method == "weight":
+            elif mode == "weight":
                 indices = np.arange(n_pixels)
                 weight_array = np.transpose([indices, np.ones(n_pixels)])
                 on_weighter.add_pixels(masked_image, weight_array, good_mask)
             else:
-                raise Exception(f"Unrecognized method {method}")
+                raise Exception(f"Unrecognized mode {mode}")
             on_n_frames[good_mask] += 1
                 
         if contains_phase(off_range, phase):
-            if method == "sum":
+            if mode == "sum":
                 off_image[good_mask] += masked_image
-            elif method == "clip":
+            elif mode == "clip":
                 off_image[good_mask] += np.round(masked_image)
-            elif method == "weight":
+            elif mode == "weight":
                 indices = np.arange(n_pixels)
                 weight_array = np.transpose([indices, np.ones(n_pixels)])
                 off_weighter.add_pixels(masked_image, weight_array, good_mask)
             else:
-                raise Exception(f"Unrecognized method {method}")
+                raise Exception(f"Unrecognized mode {mode}")
             off_n_frames[good_mask] += 1
 
-    if method == "weight":
+    if mode == "weight":
         # One needs to multiply by the number of frames since weighting calculates the mean value and the other methods compute the sum.
-        on_image = on_weighter.get_fluxes().reshape(data_set.image_shape) * on_n_frames
-        off_image = off_weighter.get_fluxes().reshape(data_set.image_shape) * off_n_frames
+        on_image = on_weighter.get_fluxes(n_iterations).reshape(data_set.image_shape) * on_n_frames
+        off_image = off_weighter.get_fluxes(n_iterations).reshape(data_set.image_shape) * off_n_frames
 
 
     on = Image(on_image, data_set, on_n_frames)

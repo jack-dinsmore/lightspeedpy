@@ -1,5 +1,5 @@
 import argparse
-from ..cli import add_dataset_args
+from ..cli import add_dataset_args, add_method_args
 from .photo import get_photometry
 
 def main():
@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--rebin", type=int, default=1, help="Number of frames to use per bin")
     parser.add_argument("--n-iterations", type=int, default=25, help="(Weight method) Number of iterations to use")
     parser.add_argument("--n-electrons", type=int, default=3, help="(Weight method) Number of electrons to simulate. Should be larger than the expected electrons per pixel.")
+    add_method_args(parser)
 
     get_photometry(parser.parse())
 

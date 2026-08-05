@@ -176,8 +176,8 @@ def make_photometry(data_set, comp_reg, targ_reg, comp_bg_reg, targ_bg_reg, mode
             raise Exception(f"Unrecognized method {mode}")
         if rebin_index == 0:
             if mode == "weight":
-                comp_flux += comp_weighter.get_fluxes()
-                targ_flux += targ_weighter.get_fluxes()
+                comp_flux += comp_weighter.get_fluxes(n_iterations)
+                targ_flux += targ_weighter.get_fluxes(n_iterations)
                 targ_weighter.clear()
                 comp_weighter.clear()
             times.push(frame.timestamp + duration)

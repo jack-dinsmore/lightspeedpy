@@ -1,11 +1,11 @@
 import argparse
-from ..cli import add_dataset_args, get_dataset
+from ..cli import add_dataset_args, get_dataset, add_method_args
 from .image import make_image
 
 def get_image(args):
     data_set = get_dataset(args)
 
-    image = make_image(data_set, args.mode)
+    image = make_image(data_set, args.mode, args.n_electrons, args.n_iterations)
 
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
@@ -19,13 +19,7 @@ def main():
     add_dataset_args(parser)
     parser.add_argument("--wcs", help="Apply wcs to final image", action=argparse.BooleanOptionalAction)
     parser.add_argument("--smooth",  required=False, help="Gaussian smoothing sigma (pixels)")
-    parser.add_argument('--mode',
-                    default='sum',
-                    const='sum',
-                    nargs='?',
-                    choices=['sum', 'clip', 'weight'],
-                    help='Analysis mode (sum, clip, or weight. Default: sum)'
-    )
+    add_method_args(parser)
     get_image(parser.parse_args())
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import argparse, sys
-from ..cli import add_dataset_args
+from ..cli import add_dataset_args, add_method_args
 from .lc import get_lc, add_lc
 
 
@@ -13,13 +13,7 @@ def main():
     parser.add_argument("--bins", required=True, help="Number of bins", type=int)
     parser.add_argument("--psf", type=float, help="Set to perform PSF weighting. The ROI will be interpreted as a FWHM contour. It must be an ellipse or circle", action=argparse.BooleanOptionalAction)
     parser.add_argument("--errors", help="Set to estimate bootstrapped errors", action=argparse.BooleanOptionalAction)
-    parser.add_argument('--mode',
-                    default='sum',
-                    const='sum',
-                    nargs='?',
-                    choices=['sum', 'clip', 'weight'],
-                    help='Analysis mode (sum, clip, or weight. Default: sum)'
-    )
+    add_method_args(parser)
     parser.set_defaults(func=get_lc)
     get_lc(parser.parse_args())
 

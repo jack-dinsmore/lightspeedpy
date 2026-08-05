@@ -154,7 +154,7 @@ def load_image(image, assert_items=None):
                 assert(hdul[0].header[key] == assert_items[key])
         return np.array(hdul[0].data)
     
-def make_image(data_set, method):
+def make_image(data_set, method, n_electrons, n_iterations):
     """
     Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame, clipped to zero or 1.
     
@@ -173,7 +173,7 @@ def make_image(data_set, method):
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
     if method == "weight":
-        weighter = Weighter(data_set, one_to_one=True)
+        weighter = Weighter(data_set, np.prod(image.shape), n_electrons, one_to_one=True)
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
@@ -190,7 +190,7 @@ def make_image(data_set, method):
         n_frames[good_mask] += 1
 
     if method == "weight":
-        image = weighter.get_fluxes().reshape(data_set.image_shape)
+        image = weighter.get_fluxes(n_iterations).reshape(data_set.image_shape)
     else:
         qe = QuantumEfficiency()
         image = qe.get_inverse(image)

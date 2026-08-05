@@ -1,5 +1,5 @@
 import argparse
-from ..cli import add_dataset_args, get_dataset
+from ..cli import add_dataset_args, add_method_args, get_dataset
 from ..ephemeris import Ephemeris
 from .onoff import make_on_off
 
@@ -8,7 +8,7 @@ def get_on_off(args):
     data_set.display_filenames()
     ephemeris = Ephemeris(args.eph, data_set, args.observatory)
 
-    image = make_on_off(data_set, ephemeris, args.range, args.mode)
+    image = make_on_off(data_set, ephemeris, args.range, args.mode, args.n_electrons, args.n_iterations)
 
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
@@ -22,13 +22,7 @@ def main():
     parser.add_argument("--range", required=True, help="Phase range. Format should be on_low:on_high,off_low:off_high")
     parser.add_argument("--observatory", help="Observatory (Default: Las Campanas Observatory)", default="Las Campanas Observatory")
     parser.add_argument("--wcs", help="Apply wcs to final image", action=argparse.BooleanOptionalAction)
-    parser.add_argument('--mode',
-                    default='sum',
-                    const='sum',
-                    nargs='?',
-                    choices=['sum', 'clip', 'weight'],
-                    help='Analysis mode (sum, clip, or weight. Default: sum)'
-    )
+    add_method_args(parser)
     get_on_off(parser.parse_args())
 
 if __name__ == "__main__":

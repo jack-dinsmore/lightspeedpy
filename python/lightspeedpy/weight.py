@@ -97,8 +97,11 @@ class Weighter:
         all_probs = np.array([self.pixel_properties.get_prob(image, n, mask) for n in self.epsilons]).transpose()
 
         self.probs_list.concatenate(all_probs)
-        self.weights_list.max_data_len = self.probs_list.max_data_len
         self.weights_list.concatenate(weights)
+
+        self.weights_list.max_data_len = min(self.weights_list.max_data_len, self.probs_list.max_data_len)
+        self.probs_list.max_data_len = self.weights_list.max_data_len
+
         self.fluxes = (self.fluxes * self.n_epochs_added + self.reverse_multiply(self.pinv(weights), image)) / (self.n_epochs_added + 1)
         self.n_epochs_added += 1
 

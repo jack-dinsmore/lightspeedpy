@@ -129,19 +129,26 @@ def accumulate_boostrap_lcs(lcs):
     """
     lc_m0 = np.zeros_like(lcs[0].flux)
     lc_m1 = np.zeros_like(lcs[0].flux)
-    lc_m2 = np.zeros_like(lcs[0].flux)
+    lc_normalized_m1 = np.zeros_like(lcs[0].flux)
+    lc_normalized_m2 = np.zeros_like(lcs[0].flux)
     for lc in lcs:
+        lc_normalized = np.copy(lc.flux)
+        lc_normalized -= np.min(lc_normalized)
+        lc_normalized /= np.max(lc_normalized)
         lc_m0 += lc.exposures
         lc_m1 += lc.flux * lc.exposures
-        lc_m2 += lc.flux * lc.flux * lc.exposures
+        lc_normalized_m1 += lc_normalized * lc.exposures
+        lc_normalized_m2 += lc_normalized * lc_normalized * lc.exposures
     lc_m1 /= lc_m0
-    lc_m2 /= lc_m0
-    lc_std = np.sqrt(lc_m2 - lc_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
+    lc_normalized_m1 /= lc_m0
+    lc_normalized_m2 /= lc_m0
+    lc_std = np.sqrt(lc_normalized_m2 - lc_normalized_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
+    lc_std *= np.nanmax(lc_m1) - np.nanmin(lc_m1)# Convert the error back to normal light curve space
 
     main_lc = lcs[0]
     main_lc.exposures = lc_m0 / N_LCS
-    main_lc.flux = lc_m1 * main_lc.exposures
-    main_lc.errors = lc_std * main_lc.exposures
+    main_lc.flux = lc_m1
+    main_lc.errors = lc_std
     return main_lc
 
 def add_lc(args):
@@ -375,7 +382,7 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
         elif mode == "weight":
             # Flux means number of photons per frame
             psf_weights = psf_image[mask]
-            psf_weights /= np.sum(psf_weights)
+            psf_weights /= np.mean(psf_weights)
             if SMEAR_FRAME:
                 weight_matrix = np.multiply.outer(psf_weights, weights)
                 weighter.add_pixels(masked_image, weight_matrix, mask)

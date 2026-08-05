@@ -1,6 +1,7 @@
 import numpy as np
 import os
 TMP_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "tmp"))
+MAX_ENORMOUS_ARRAY_SIZE = 100e6 # 100 megs
 
 def trim_image(image, source_data_set, dest_data_set):
     my_vpos = int(dest_data_set.header1["HIERARCH SUBARRAY VPOS"]) if dest_data_set.header1["HIERARCH SUBARRAY MODE"] == "ON" else 0
@@ -61,32 +62,36 @@ class EnormousArray:
         self.filenames = []
         self.data = []
         self.max_data_len = max_data_len
+        self.length = 0
         if not os.path.exists(TMP_LOCATION):
             os.mkdir(TMP_LOCATION)
     
     def append(self, item):
-        self.data.append(item)
+        self.data.append([item])
+        self.length += 1
         if self.max_data_len is None:
-            self.max_data_len = int(1e9 / np.array(item).nbytes)
-        if len(self.data) > self.max_data_len:
+            self.max_data_len = int(MAX_ENORMOUS_ARRAY_SIZE / np.array(item).nbytes)
+        if self.length > self.max_data_len:
             self.finish()
     
     def concatenate(self, items):
-        self.data += list(items)
+        self.data.append(items)
+        self.length += len(items)
         if self.max_data_len is None:
-            self.max_data_len = int(1e9 / np.array(items[0]).nbytes)
-        if len(self.data) > self.max_data_len:
+            self.max_data_len = int(MAX_ENORMOUS_ARRAY_SIZE / np.array(items[0]).nbytes)
+        if self.length > self.max_data_len:
             self.finish()
     
     def finish(self):
-        if len(self.data) == 0: return
+        if self.length == 0: return
         filename = None
         while filename is None or os.path.exists(filename):
             name = np.random.randint(2**24)
             filename = f"{TMP_LOCATION}/tmp-{name}.npy"
-        np.save(filename, self.data)
+        np.save(filename, np.concatenate(self.data))
         self.filenames.append(filename)
         self.data = []
+        self.length = 0
 
     def __iter__(self):
         self.finish()

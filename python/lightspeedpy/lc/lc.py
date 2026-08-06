@@ -6,9 +6,8 @@ from ..cli import get_dataset
 from ..regions import Region, CircleRegion, EllipseRegion
 from ..ephemeris import Ephemeris
 from ..constants import FORBIDDEN_KEYWORDS
-from ..weight import Weighter
+from ..weight import WeighterChiSquared, PixelLayout
 
-SMEAR_FRAME = False # Set to True to smear each frame's flux over the phases for which it is valid. Set to False to give all the flux to the one bin at the middle of the frame.
 N_LCS = 8 # Number of LCs to use for boostrapped errors
 
 def make_psf_image(data_set, reg_file):
@@ -287,44 +286,6 @@ class Lightcurve:
         hdul = fits.HDUList([fits.PrimaryHDU(), hdu])
         hdul.writeto(filename, overwrite=clobber)
 
-def get_bin_weights(phase_edges, start_phase, end_phase):
-    """
-    Gets an array of light curve bin weights. The weight is the frame fraction that goes into this bin
-
-    Parameters
-    ----------
-    phase_edges : array
-        The edges of the light curve phase bins
-    start_phase : float
-        The phase at the start of the frame
-    end_phase : float
-        The phase at the end of the frame
-    """
-    weights = np.zeros(len(phase_edges)-1)
-    bin_phase_duration = phase_edges[1] - phase_edges[0]
-    phase_duration = delta_phase(start_phase, end_phase)
-
-    # Get the weights at the start and end
-    start_index = int(start_phase / bin_phase_duration)
-    end_index = int(end_phase / bin_phase_duration)
-
-    if start_index == end_index:
-        weights[start_index] += 1
-    else:
-        weights[start_index] += delta_phase(start_phase, phase_edges[start_index+1]) / phase_duration
-        weights[end_index] += delta_phase(phase_edges[end_index], end_phase) / phase_duration
-
-    # Get the weights between the start and end
-    if start_index > end_index:
-        weights[start_index+1:] += bin_phase_duration / phase_duration
-        weights[:end_index] += bin_phase_duration / phase_duration
-    else:
-        weights[start_index+1:end_index] += bin_phase_duration / phase_duration
-
-    assert(np.abs(np.sum(weights) - 1) < 1e-5)
-    
-    return weights
-
 def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=3, n_iterations=25):
     """
     Get the light curve of a source by summing all the detected photons per frame
@@ -357,39 +318,25 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
     roi_mask = roi.contains(xs, ys)
     if psf_image is None:
         psf_image = np.ones(data_set.image_shape)
+    psf_image /= np.sum(psf_image)
 
     if mode == "weight":
-        weighter = Weighter(data_set, n_bins, n_electrons, blur=SMEAR_FRAME)
+        pixel_layout = PixelLayout.light_curve(data_set, n_bins, roi_mask)
+        weighter = WeighterChiSquared(pixel_layout, n_electrons, psf_image[roi_mask].reshape(-1, 1))
 
     for frame in data_set:
-        mask = roi_mask & np.isfinite(frame.image)
-        masked_image = frame.image[mask]
-        
-        if SMEAR_FRAME:
-            start_phase = ephemeris.get_phase(frame.timestamp-frame.duration/2)
-            end_phase = ephemeris.get_phase(frame.timestamp+frame.duration/2)
-            weights = get_bin_weights(phase_edges, start_phase, end_phase)
-        else:
-            phase = ephemeris.get_phase(frame.timestamp)
-            weights = np.zeros(n_bins)
-            weights[np.digitize(phase, phase_edges)-1] = 1
-
-        exposures += frame.duration*weights
+        mid_phase = ephemeris.get_phase(frame.timestamp)
+        bin_index = np.digitize(mid_phase, phase_edges) - 1
+        exposures[bin_index] += frame.duration
         if mode == "sum":
-            electrons += np.nansum(masked_image) * weights
+            mask = roi_mask & np.isfinite(frame.image)
+            electrons[bin_index] += np.nansum(frame.image[mask])
         elif mode == "clip":
-            electrons += np.nansum(np.round(masked_image)) * weights
+            mask = roi_mask & np.isfinite(frame.image)
+            electrons[bin_index] += np.nansum(np.round(frame.image[mask]))
         elif mode == "weight":
             # Flux means number of photons per frame
-            psf_weights = psf_image[mask]
-            psf_weights /= np.mean(psf_weights)
-            if SMEAR_FRAME:
-                weight_matrix = np.multiply.outer(psf_weights, weights)
-                weighter.add_pixels(masked_image, weight_matrix, mask)
-            else:
-                indices = np.ones(len(masked_image)) * np.argmax(weights)
-                weight_array = np.transpose([indices, psf_weights])
-                weighter.add_pixels(masked_image, weight_array, mask)
+            weighter.add_pixels(frame.image[roi_mask], bin_index)
         else:
             raise Exception(f"Unrecognized method {mode}")
 

@@ -1,9 +1,75 @@
 import numpy as np
 from scipy.special import factorial, binom
 from .qe import QuantumEfficiency, MAX_D
-from .util import EnormousArray
+from .constants import ADU_PER_ELECTRON
 
-class Weighter:
+class PixelLayout:
+    """
+    The weighter stores count histograms for all data expected to have the same flux and noise properties. For imaging, that means it stores one histogram per pixel. For light curves, it stores one histogram per pixel per bin. This class defines the layout used for a given fit.
+
+    Parameters
+    ----------
+    data_set : DataSet
+        Data set from which the data was collected
+    pixel_indices : array-like
+        An array containing the pixel index of each histogram
+    """
+    def __init__(self, data_set, pixel_indices, mask=None):
+        self.pixel_indices = pixel_indices
+        self.pixel_properties = data_set.get_pixel_properties(True)
+        self.mask = mask
+        self.n_pixels = np.prod(data_set.image_shape) if mask is None else np.sum(mask)
+
+    def image(data_set, mask=None):
+        """
+        Create the pixel layout for an imaging fit
+
+        Parameters
+        ----------
+        data_set : DataSet
+            Data set from which the data was collected
+        mask : array-like (optional)
+            Mask indicating the section of the detector used. If not provided, the fitter will treat every pixel in the frame.
+        """
+        n_pixels = np.prod(data_set.image_shape) if mask is None else np.sum(mask)
+        return PixelLayout(data_set, np.arange(n_pixels), mask)
+
+    def light_curve(data_set, n_bins, mask=None):
+        """
+        Create the pixel layout for a light curve fit
+
+        Parameters
+        ----------
+        data_set : DataSet
+            Data set from which the data was collected
+        n_bins : int
+            Number of light curve bins
+        mask : array-like (optional)
+            Mask indicating the section of the detector used. If not provided, the fitter will treat every pixel in the frame.
+        """
+        n_pixels = np.prod(data_set.image_shape) if mask is None else np.sum(mask)
+        return PixelLayout(data_set, np.concatenate([np.arange(n_pixels)] * n_bins), mask)
+
+    def n_histograms(self):
+        return len(self.pixel_indices)
+
+    def _get_p_u_epsilon(self, u_bins, epsilons):
+        pixel_probs = np.zeros((self.n_pixels, len(u_bins)-1, len(epsilons)))
+        image = np.ones(self.n_pixels)
+
+        u_centers = (u_bins[:-1] + u_bins[1:]) / 2
+        for (i, u) in enumerate(u_centers):
+            for (j, epsilon) in enumerate(epsilons):
+                pixel_probs[:,i,j] = self.pixel_properties.get_prob(image * u, epsilon, self.mask)
+        pixel_probs = np.einsum("aue,ae->aue", pixel_probs, 1/np.sum(pixel_probs, axis=1))
+
+        output = np.zeros((len(self.pixel_indices), len(u_bins)-1, len(epsilons)))
+        for (i, pixel_index) in enumerate(self.pixel_indices):
+            output[i] = pixel_probs[pixel_index]
+
+        return output
+
+class WeighterChiSquared:
     """
     A class to perform weighted analyses. After initialization, add pixels using the add_pixels method and perform the fit using get_fluxes.
 
@@ -11,25 +77,37 @@ class Weighter:
     ----------
     data_set : DataSet
         Data set from which the data was collected
-    n_outputs : int
-        Number of flux values that are fitted for
-    max_n : int, optional
-        Max numbers of electrons per pixel to model (default: 3)
-    blur : bool, optional
-        Set to False to guarantee that each pixel contributes to only one flux value. If you set this flag, then the weights you pass to add_pixels needs to be a tuple of the flux indices and the weight value.
+    max_electrons : int
+        Max numbers of electrons per pixel to model
+    weight_matrix: array-like
+        The pixel weights to apply. The weight matrix M is defined such that lambda = M f, where f is the vector of fluxes which will be returned by this fitter and lambda is the incident photon rate for each pixel. Note: If you provide a 1D array, it will be assumed that you meant a 2D array where the second axis had length 1. If your weight_matrix smaller than the number of pixels listed in the pixel layout, it will be assumed that you provided a per-pixel weight which you want to be the same for all pixels regardless of the time bin.
     """
-    def __init__(self, data_set, n_outputs, max_n, blur=True):
-        self.weights_list = EnormousArray() # Stores the w_{ai} matrix. Shape: a, i
-        self.probs_list = EnormousArray() # Shape: a, max_n
-        self.qe = QuantumEfficiency()
-        self.epsilons = np.arange(max_n+1)
-        self.pixel_properties = data_set.get_pixel_properties(True)
-        self.fluxes = np.zeros(n_outputs)
-        self.n_outputs = n_outputs
-        self.blur = blur
-        self.n_epochs_added = 0
+    def __init__(self, pixel_layout, max_electrons, weight_matrix):
+        self.pixel_layout = pixel_layout
+        self.u_edges = np.arange(-2, max_electrons, 1/ADU_PER_ELECTRON)
+        self.histograms = np.zeros((pixel_layout.n_histograms(), len(self.u_edges)-1))
+        self.max_electrons = max_electrons
+        self.prep_fit(max_electrons, weight_matrix)
 
-        p_epsilon_gamma = self.qe.p_epsilon_gamma[:max_n+1, :max_n+1]
+    def prep_fit(self, max_electrons, weight_matrix):
+        self.epsilons = np.arange(max_electrons+1)
+        self.p_u_epsilons = self.pixel_layout._get_p_u_epsilon(self.u_edges, self.epsilons)
+
+        # Make the weight matrix
+        if weight_matrix.ndim == 1:
+            weight_matrix = weight_matrix.reshape(-1,1)
+        if weight_matrix.shape[0] == self.pixel_layout.n_histograms():
+            self.weight_matrix = weight_matrix
+        else:
+            # Assume this is a light curve, so the pixel layout should just be duplicated for each bin.
+            n_bins = self.pixel_layout.n_histograms() // weight_matrix.shape[0]
+            self.weight_matrix = np.zeros((self.pixel_layout.n_histograms(), n_bins))
+            for i in range(n_bins):
+                self.weight_matrix[self.pixel_layout.n_pixels*i:self.pixel_layout.n_pixels*(i + 1), i] = weight_matrix[:,0]
+
+        # Make the product of p_epsilon_gamma with p_epsilon_gamma_prime
+        qe = QuantumEfficiency()
+        p_epsilon_gamma = qe.p_epsilon_gamma[:max_electrons+1, :max_electrons+1]
         gamma, gamma_prime = np.meshgrid(self.epsilons, self.epsilons, indexing="ij")
         self.p_epsilon_gamma_primes = []
         for k in range(3):
@@ -39,47 +117,12 @@ class Weighter:
             self.p_epsilon_gamma_primes.append(p_epsilon_gamma @ m_gamma_gamma_prime)
 
     def clear(self):
-        self.weights_list.clear()
-        self.probs_list.clear()
-        self.fluxes *= 0
-        self.n_epochs_added = 0
+        """
+        Clear the weighter of all previous data
+        """
+        self.histograms *= 0
 
-    def pinv(self, weights):
-        if self.blur:
-            if len(weights.shape) == 1:
-                return weights / np.sum(weights**2)
-            elif np.all(np.sum(weights != 0, axis=1) == 1):
-                # There's a simplification for calculating the MPI
-                weights_pinv = np.copy(weights)
-                weights_pinv[weights_pinv != 0] = 1/np.sum(weights)
-                return weights_pinv
-            else:
-                return np.transpose(np.linalg.pinv(weights))
-        else:
-            output = np.copy(weights)
-            indices = weights[:,0].astype(int)
-            denom = np.bincount(indices, weights=weights[:,1]**2, minlength=self.n_outputs)[indices]
-            output[:,1] = np.where(denom > 0, weights[:,1] / denom, 0.0)
-            return output
-        
-    def multiply(self, weights, fluxes):
-        if self.blur:
-            return np.einsum("ai,i->a", weights, fluxes)
-        else:
-            return fluxes[weights[:,0].astype(int)] * weights[:,1]
-    def reverse_multiply(self, weights, lamb):
-        if self.blur:
-            return np.einsum("ai,a->i", weights, lamb)
-        else:
-            return np.bincount(weights[:,0].astype(int), weights=weights[:,1] * lamb, minlength=self.n_outputs)
-    def reverse_multiply_2(self, weights, lamb):
-        if self.blur:
-            return np.einsum("ai,aj,a->ij", weights, weights, lamb)
-        else:
-            diag = np.bincount(weights[:,0].astype(int), weights=weights[:,1]**2 * lamb, minlength=self.n_outputs)
-            return np.diag(diag)
-
-    def add_pixels(self, image, weights, mask=None):
+    def add_pixels(self, image, time_index=0):
         """
         Add some pixels to the fit.
         
@@ -87,88 +130,60 @@ class Weighter:
         ----------
         image : array-like (a,)
             The frame to add. If you are using a mask, ensure this array is masked. This array must be 1-D
-        weights : array-like (a, i,) or tuple(j, w)
-            Weight matrix that connect the observed flux to the parameters. If blur is False, then weights is a tuple of indices and the weight values
         mask : array-like
             The mask used to make the image
+        time_index: int, optional
+            For light curves, this argument provides index of the relevant light curve bin.
         """
 
-        # Calculate the noise probabilities
-        all_probs = np.array([self.pixel_properties.get_prob(image, n, mask) for n in self.epsilons]).transpose()
-
-        self.probs_list.concatenate(all_probs)
-        self.weights_list.concatenate(weights)
-
-        self.weights_list.max_data_len = min(self.weights_list.max_data_len, self.probs_list.max_data_len)
-        self.probs_list.max_data_len = self.weights_list.max_data_len
-
-        self.fluxes = (self.fluxes * self.n_epochs_added + self.reverse_multiply(self.pinv(weights), image)) / (self.n_epochs_added + 1)
-        self.n_epochs_added += 1
+        histogram_indices = np.arange(len(image))
+        bin_indices = np.digitize(image, self.u_edges)
+        acceptable_mask = (bin_indices >= 1) & (bin_indices < len(self.u_edges))
+        histogram_indices = histogram_indices[acceptable_mask]
+        histogram_indices += self.pixel_layout.n_pixels * time_index
+        bin_indices = bin_indices[acceptable_mask] - 1
+        self.histograms[histogram_indices, bin_indices] += 1
 
     def get_fluxes(self, n_iterations=10):
-        self.fluxes = np.ones_like(self.fluxes)
+        self.histograms = np.einsum("au,a->au", self.histograms, 1/np.sum(self.histograms, axis=1))
+        estimated_pixel_fluxes = np.sum(self.histograms * (self.u_edges[1:] + self.u_edges[:-1])/2, axis=1)
+        fluxes = np.linalg.pinv(self.weight_matrix) @ estimated_pixel_fluxes
+
         for iteration in range(n_iterations):
-            frac_shift = self.iterate()
-            print(f"Iteration {iteration+1}: fractional shift of {frac_shift*100:.2f}%")
-            if frac_shift < 0.01:
+            fluxes = np.maximum(fluxes, 1e-5)
+            fluxes[np.isnan(fluxes)] = 1
+
+            lambdas = self.weight_matrix @ fluxes
+            gamma_grid, lambda_grid = np.meshgrid(self.epsilons, lambdas, indexing="ij")
+            p_gamma_lambdas = lambda_grid**gamma_grid / factorial(gamma_grid)*np.exp(-lambdas)
+
+            # Get the likelihood derivatives at each bin position
+            d0 = np.einsum("aue,eg,ga->au", self.p_u_epsilons, self.p_epsilon_gamma_primes[0], p_gamma_lambdas)
+            d1 = np.einsum("aue,eg,ga->au", self.p_u_epsilons, self.p_epsilon_gamma_primes[1], p_gamma_lambdas)
+            d2 = np.einsum("aue,eg,ga->au", self.p_u_epsilons, self.p_epsilon_gamma_primes[2], p_gamma_lambdas)
+
+            bad_mask = (d0 == 0) | np.isnan(d0)
+            d0[bad_mask] = np.nan
+            d1[bad_mask] = np.nan
+            d2[bad_mask] = np.nan
+
+            grad_summand = np.nansum(self.histograms * (d1 / d0) - d1, axis=1)
+            hess_summand = np.nansum(self.histograms * (d2 / d0 - d1**2 / d0**2) - d2, axis=1)
+            gradient = np.einsum("ai,a->i", self.weight_matrix, grad_summand)
+            hessian = np.einsum("ai,aj,a->ij", self.weight_matrix, self.weight_matrix, hess_summand)
+            inverse_hessian = np.linalg.inv(hessian)
+            
+            old_fluxes = np.copy(fluxes)
+            fluxes -= inverse_hessian @ gradient
+            fractional_shift = np.sqrt(np.nanmean((fluxes - old_fluxes)**2)) / np.abs(np.nanmean(old_fluxes))
+            print(f"Iteration {iteration+1}: fractional shift of {fractional_shift*100:.2f}%")
+            if fractional_shift < 0.01:
                 break
 
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots()
-            ax.step(np.arange(len(self.fluxes)), self.fluxes)
+            ax.step(np.arange(len(fluxes)), fluxes)
             fig.savefig("fluxes.png")
+            plt.close()
 
-        return self.fluxes
-
-    def iterate(self):
-        # Perform an iteration
-        self.fluxes = np.maximum(self.fluxes, 1e-5)
-        self.fluxes[np.isnan(self.fluxes)] = 1
-        like = 0
-        gradient = np.zeros(len(self.fluxes))
-        hessian = np.zeros((len(self.fluxes), len(self.fluxes)))
-
-        for chunk_probs, chunk_weights in zip(self.probs_list, self.weights_list):
-            lambdas = self.multiply(chunk_weights, self.fluxes)
-            gamma_grid, lambda_grid = np.meshgrid(self.epsilons, lambdas, indexing="ij")
-            p_gamma_lambdas = lambda_grid**gamma_grid / factorial(gamma_grid)*np.exp(-lambdas)
-
-            d0 = np.einsum("ax,xy,ya->a", chunk_probs, self.p_epsilon_gamma_primes[0], p_gamma_lambdas)
-            d1 = np.einsum("ax,xy,ya->a", chunk_probs, self.p_epsilon_gamma_primes[1], p_gamma_lambdas)
-            d2 = np.einsum("ax,xy,ya->a", chunk_probs, self.p_epsilon_gamma_primes[2], p_gamma_lambdas)
-
-            bad_mask = (~np.isfinite(d0)) | (d0 == 0)
-            grad_summand = d1/d0
-            hess_summand = d2/d0 - grad_summand**2
-            grad_summand[bad_mask] = 0
-            hess_summand[bad_mask] = 0
-            like += np.sum(np.log(d0[~bad_mask]))
-
-            gradient += self.reverse_multiply(chunk_weights, grad_summand)
-            hessian += self.reverse_multiply_2(chunk_weights, hess_summand)
-
-        if self.blur:
-            inverse_hessian = np.linalg.inv(hessian)
-        else:
-            inverse_hessian = np.diag(1/np.diagonal(hessian))
-
-        old_fluxes = np.copy(self.fluxes)
-        self.fluxes -= inverse_hessian @ gradient
-        # self.fluxes = self.check_boundaries(self.fluxes)
-
-        fractional_shift = np.sqrt(np.nanmean((self.fluxes - old_fluxes)**2)) / np.abs(np.nanmean(old_fluxes))
-        return fractional_shift
-
-    def check_boundaries(self, fluxes):
-        min_lambda = 0
-        max_lambda = self.epsilons[-1]
-        shift = np.zeros_like(fluxes)
-        n_chunks = 0
-        for chunk_weights in self.weights_list:
-            lambdas = self.multiply(chunk_weights, fluxes)
-            normal = -np.minimum(lambdas, min_lambda)
-            normal += max_lambda - np.maximum(lambdas, max_lambda)
-            shift += self.reverse_multiply(self.pinv(chunk_weights), normal)
-            n_chunks += 1
-        shift /= n_chunks
-        return fluxes + shift
+        return fluxes

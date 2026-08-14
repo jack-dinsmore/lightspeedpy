@@ -6,7 +6,6 @@ import tqdm
 
 QE_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "qe.csv"))
 P_EPSILON_GAMMA_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "tmp", "p_epsilon_gamma.npy"))
-MAX_D = 6
 MAX_ELECTRONS = 8200
 MAX_CALC_N = 100
 TRAP_N = 4

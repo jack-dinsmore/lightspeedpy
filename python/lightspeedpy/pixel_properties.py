@@ -115,11 +115,11 @@ class PixelProperties:
         if self.params is None:
             raise Exception("You cannot get a noise probability unless you first map the noise distribution")
         if mask is None:
-            denom = 1 / (2*self.params[:,0]**2)
-            pdf = np.exp(-(image-self.params[:,1] - true_n)**2 * denom) * self.params[:,2]
-            pdf += np.exp(-(image-self.params[:,1]-self.params[:,3] - true_n)**2 * denom) * self.params[:,4]
-            pdf += np.exp(-(image-self.params[:,1]+self.params[:,5] - true_n)**2 * denom) * self.params[:,6]
-            pdf /= np.sqrt(2*np.pi*self.params[:,0]**2)
+            denom = 1 / (2*self.params[:,:,0]**2)
+            pdf = np.exp(-(image-self.params[:,:,1] - true_n)**2 * denom) * self.params[:,:,2]
+            pdf += np.exp(-(image-self.params[:,:,1]-self.params[:,:,3] - true_n)**2 * denom) * self.params[:,:,4]
+            pdf += np.exp(-(image-self.params[:,:,1]+self.params[:,:,5] - true_n)**2 * denom) * self.params[:,:,6]
+            pdf /= np.sqrt(2*np.pi*self.params[:,:,0]**2)
         else:
             denom = 1 / (2*self.params[mask,0]**2)
             pdf = np.exp(-(image-self.params[mask,1] - true_n)**2 * denom) * self.params[mask,2]

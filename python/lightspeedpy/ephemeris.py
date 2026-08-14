@@ -58,6 +58,7 @@ class EphemerisLibrary():
                 self.ephemerides[psr] = [int(index)]
 
     def get(self, model, these_timestamps):
+        these_mjd = these_timestamps.mjd
         psr = model["PSR"].value
         if psr not in self.ephemerides:
             return None
@@ -68,8 +69,8 @@ class EphemerisLibrary():
                 if not models_are_equal(saved_model, model):
                     continue
 
-            timestamps, phases = np.load(f"{TMP_LOCATION}/{psr}_{index}.npy")
-            if len(timestamps) != len(these_timestamps) or np.max(np.abs(timestamps - these_timestamps)) > 1e-6:
+            mjd, phases = np.load(f"{TMP_LOCATION}/{psr}_{index}.npy")
+            if len(mjd) != len(these_mjd) or np.max(np.abs(mjd - these_mjd)) > 1e-10:
                 # The timestamps are not the same, meaning different files are being loaded with the same ephem
                 continue
 
@@ -97,7 +98,7 @@ class EphemerisLibrary():
 
         with open(f"{TMP_LOCATION}/{save_name}.pkl", 'wb') as f:
             pickle.dump(model, f)
-        np.save(f"{TMP_LOCATION}/{save_name}.npy", [timestamps, phases])
+        np.save(f"{TMP_LOCATION}/{save_name}.npy", [timestamps.mjd, phases])
         with open(f"{TMP_LOCATION}/{save_name}.dat", 'w') as f:
             f.write(str(datetime.datetime.now()))
 
@@ -120,36 +121,35 @@ class Ephemeris():
 
         self.model = model_builder.get_model(parfile)
         self.nu = self.model["F0"].value
+        self.min_timestamp = timestamps[np.argmin(timestamps.mjd)]
 
         library = EphemerisLibrary()
         result = library.get(self.model, timestamps)
-        self.timestamps = np.copy(timestamps)
 
         if result is None:
             print("Calculating phases")
             ephem = self.model["EPHEM"].value
 
-            times_mjd = timestamps / (3600 * 24)
             toas = pint.toa.get_TOAs_array(
-                Time(times_mjd, format="mjd", scale="utc"),
-                freqs=np.ones(len(times_mjd)) * 500 * u.THz,  # Dummy frequency
-                errors=np.ones(len(times_mjd)) * 1 * u.us,  # Dummy errors
+                timestamps,
+                freqs=np.ones(len(timestamps)) * 500 * u.THz,  # Dummy frequency
+                errors=np.ones(len(timestamps)) * 1 * u.us,  # Dummy errors
                 ephem=ephem,
                 obs=observatory,
             )
             phases = self.model.phase(toas)
             delta_phase_int = phases.int - np.min(phases.int)
             self.phases = delta_phase_int.astype(np.float64) + phases.frac.astype(np.float64)
-            library.push(self.model, self.timestamps, self.phases)
+            library.push(self.model, timestamps, self.phases)
 
         else:
             self.phases = result
 
-        self.interpolator = interp1d(self.timestamps, self.phases, bounds_error=False, fill_value="extrapolate") # Extrapolate. This will extrapolate the calculated phases throughout the last frame, which is out of bounds of the interpolator.
+        self.interpolator = interp1d((timestamps - self.min_timestamp).jd, self.phases, bounds_error=False, fill_value="extrapolate") # Extrapolate. This will extrapolate the calculated phases throughout the last frame, which is out of bounds of the interpolator.
 
     def get_phase(self, time):
         """
         Returns the phase (0 to 1) corresponding to a specific time
         """
-        phase = self.interpolator(time)
+        phase = self.interpolator((time - self.min_timestamp).jd)
         return phase - np.floor(phase)

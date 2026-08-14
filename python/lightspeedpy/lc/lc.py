@@ -6,9 +6,9 @@ from ..cli import get_dataset
 from ..regions import Region, CircleRegion, EllipseRegion
 from ..ephemeris import Ephemeris
 from ..constants import FORBIDDEN_KEYWORDS
-from ..weight import WeighterChiSquared, PixelLayout
+from ..weight import Weighter, PixelLayout
 
-N_LCS = 8 # Number of LCs to use for boostrapped errors
+N_BOOTSTRAP = 8 # Number of LCs to use for boostrapped errors
 
 def make_psf_image(data_set, reg_file):
     """
@@ -25,17 +25,17 @@ def make_psf_image(data_set, reg_file):
     region = Region.load(reg_file)
     if type(region) is CircleRegion:
         fwhm_pixels = np.sqrt(region.radius2)
-        sigma_x = fwhm_pixels / 2.34
-        sigma_y = fwhm_pixels / 2.34
+        sigma_x = fwhm_pixels / 1.178
+        sigma_y = fwhm_pixels / 1.178
         theta = 0
     elif type(region) is EllipseRegion:
-        sigma_x = region.a / 2.34
-        sigma_y = region.b / 2.34
+        sigma_x = region.a / 1.178
+        sigma_y = region.b / 1.178
         theta = region.angle
     else:
         raise Exception("PSF weighting can only be performed with elliptical or circular regions")
-    
-    rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+
+    rot = np.array([[np.sin(theta), np.cos(theta)], [-np.cos(theta), np.sin(theta)]])
     inv_cov = rot @ np.diag([1/sigma_x**2, 1/sigma_y**2]) @ np.transpose(rot)
     vec = np.array([xs - region.x, ys - region.y])
     gauss_exp = np.einsum("iab,ij,jab->ab", vec, inv_cov, vec)
@@ -82,26 +82,26 @@ def get_lc(args):
         else:
             raise Exception("PSF weighting can only be performed with elliptical or circular regions")
 
-    is_slurm = False
     if args.errors is None:
         lc = make_lc(data_set, roi, ephemeris, args.bins, args.mode, psf_image, args.n_electrons, args.n_iterations)
-
         save_name = args.output
+        is_slurm = False
     else:
         if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
             lc = make_bootstrap_lc(None, data_set, roi, ephemeris, args, psf_image)
-            if not os.path.exists(args.outputw[:-5]):
+            if not os.path.exists(args.output[:-5]):
                 os.mkdir(args.output[:-5])
             save_name = f"{args.output[:-5]}/{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
             is_slurm = True
         else:
             params = []
-            for _ in range(N_LCS):
+            for _ in range(N_BOOTSTRAP):
                 params.append([np.random.randint(2**32), data_set, roi, ephemeris, args, psf_image])
             with Pool() as pool:
                 lcs = pool.starmap(make_bootstrap_lc, params)
-            lc = accumulate_boostrap_lcs(lcs)
+            lc = accumulate_bootstrap_lcs(lcs)
             save_name = args.output
+            is_slurm = False
 
     save_kwargs = vars(args)
     if "func" in save_kwargs: del save_kwargs["func"]
@@ -118,11 +118,11 @@ def get_lc(args):
             lcs.append(Lightcurve.load(filename))
 
         # Save the accumulated light curve
-        lc = accumulate_boostrap_lcs(lcs)
+        lc = accumulate_bootstrap_lcs(lcs)
         lc.save(args.output, args.clobber, save_kwargs)
         
 
-def accumulate_boostrap_lcs(lcs):
+def accumulate_bootstrap_lcs(lcs):
     """
     Accumulate bootstrapped LCs into one LC with errors
     """
@@ -141,7 +141,7 @@ def accumulate_boostrap_lcs(lcs):
     lc_m1 /= lc_m0
     lc_normalized_m1 /= lc_m0
     lc_normalized_m2 /= lc_m0
-    lc_std = np.sqrt(lc_normalized_m2 - lc_normalized_m1**2) * np.sqrt(N_LCS / (N_LCS - 1))
+    lc_std = np.sqrt(lc_normalized_m2 - lc_normalized_m1**2) * np.sqrt(N_BOOTSTRAP / (N_BOOTSTRAP - 1))
     lc_std *= np.nanmax(lc_m1) - np.nanmin(lc_m1)# Convert the error back to normal light curve space
 
     main_lc = lcs[0]
@@ -300,7 +300,7 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
         The ciao-format, physical coordinate region file containing the source
     ephemeris : Ephemeris
         The source ephemeris
-    method : str
+    mode : str
         Either "sum", "clip", or "weight", specifying the method of LC generation
     psf_image : array, optional
         PSF image used for weighting. The image is only used when doing pixel weighting.
@@ -318,11 +318,12 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
     roi_mask = roi.contains(xs, ys)
     if psf_image is None:
         psf_image = np.ones(data_set.image_shape)
+    psf_image[~roi_mask] = 0
     psf_image /= np.sum(psf_image)
 
     if mode == "weight":
         pixel_layout = PixelLayout.light_curve(data_set, n_bins, roi_mask)
-        weighter = WeighterChiSquared(pixel_layout, n_electrons, psf_image[roi_mask].reshape(-1, 1))
+        weighter = Weighter(pixel_layout, n_electrons, psf_image[roi_mask].reshape(-1, 1))
 
     for frame in data_set:
         mid_phase = ephemeris.get_phase(frame.timestamp)
@@ -336,7 +337,7 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
             electrons[bin_index] += np.nansum(np.round(frame.image[mask]))
         elif mode == "weight":
             # Flux means number of photons per frame
-            weighter.add_pixels(frame.image[roi_mask], bin_index)
+            weighter.add_pixels(frame.image[roi_mask], time_index=bin_index)
         else:
             raise Exception(f"Unrecognized method {mode}")
 
@@ -344,4 +345,5 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
         fluxes = electrons / exposures # Counts per second for total source
     else:
         fluxes = weighter.get_fluxes(n_iterations) / frame.duration # Counts per second for total source
+
     return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

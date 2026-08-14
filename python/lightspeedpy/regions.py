@@ -215,7 +215,8 @@ class EllipseRegion(Region):
             line = f.readline()
             if not line.startswith("ellipse("):
                 raise Exception("Ellipse regions must start with ellipse")
-            x, y, a, b, angle = line[8:-2].split(",")
+            if line.endswith('\n'): line = line[:-1]
+            x, y, a, b, angle = line[8:-1].split(",")
             self.x = float(x)
             self.y = float(y)
             self.a = float(a)

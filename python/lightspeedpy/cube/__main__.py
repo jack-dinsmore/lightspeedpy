@@ -14,7 +14,7 @@ def main():
     parser_split.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser_split.set_defaults(func=split)
 
-    parser_cube = subparsers.add_parser('cube', help='Create a data cube')
+    parser_cube = subparsers.add_parser('stack', help='Create a data cube')
     add_dataset_args(parser_cube)
     parser_cube.set_defaults(func=cube)
 

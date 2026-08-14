@@ -46,6 +46,7 @@ def fit_gaussian(args):
 
     positions = np.array([xs - result.x[0], ys - result.x[1]])
     matrix = np.array([[result.x[2], result.x[4]], [result.x[4], result.x[3]]])
+    amp = result.x[5] / result.x[6]
     
     # model = np.exp(-np.einsum("iab,ij,jab->ab", positions, matrix, positions) / 2)
     # model /= np.mean(model)
@@ -73,6 +74,6 @@ def fit_gaussian(args):
     major *= 2.355 * PIXEL_SIZE
     minor *= 2.355 * PIXEL_SIZE
 
-    print(f"The PSF was {major:.2f}\" x {minor:.2f}\" @ {theta:.0f} deg")
+    print(f"The PSF was {major:.2f}\" x {minor:.2f}\" @ {theta:.0f} deg, with an amplitude of {amp:.1f}x background")
 
     return major, minor, theta

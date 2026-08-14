@@ -1,6 +1,7 @@
 import numpy as np
 import tqdm
 from astropy.io import fits
+from astropy.time import TimeDelta
 from scipy.ndimage import median_filter
 from .constants import ADU_PER_ELECTRON
 
@@ -90,7 +91,7 @@ class DataSetIterator:
         # Don't flat or QE correct; that should be post-processing
         timestamp = np.float64(self.open_file[2].data["TIMESTAMP"][self.bundle_index])
         timestamp += self.data_set.seconds_per_frame * self.frame_index
-        timestamp += self.data_set.start_time
+        timestamp = self.data_set.start_time + TimeDelta(timestamp, format="sec")
 
         if self.bar is not None:
             self.bar.update(1)
@@ -111,7 +112,7 @@ class Frame:
     def __init__(self, image, timestamp, duration, is_saturated):
         self.image = image
         self.duration = duration
-        self.timestamp = timestamp # Seconds
+        self.timestamp = timestamp # Astropy Time object
         self.is_saturated = is_saturated
 
 def cosmic_ray_filter(image, cr_thresh):

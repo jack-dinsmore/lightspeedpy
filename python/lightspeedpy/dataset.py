@@ -1,7 +1,7 @@
 import numpy as np
 import os, copy
 from astropy.io import fits
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 from .frame import DataSetIteratorRet
 from .pixel_properties import PixelProperties
 from .qe import QuantumEfficiency
@@ -276,10 +276,9 @@ class DataSet:
             self.start_time = Time(hdul[0].header["GPSSTART"], format="isot")
         except:
             self.start_time = Time(0, format="mjd")
-        self.start_time = self.start_time.mjd * 3600 * 24 # start_time in units of seconds
-        self.start_time -= hdul[2].data["TIMESTAMP"][0] # start_time is now time that the last frame in the first bundle was read out. This line doesn't do anything since December, since the first timestamp is already subtracted.
-        self.start_time += hdul[1].header["HIERARCH TIMING READOUT TIME"] / 2# start_time is now time that the frame before the first frame was halfway through readout
-        self.start_time += hdul[1].header["HIERARCH EXPOSURE TIME"] / 2# start_time is offset by half the exposure
+        # self.start_time -= hdul[2].data["TIMESTAMP"][0] # start_time is now time that the last frame in the first bundle was read out.
+        self.start_time += TimeDelta(hdul[1].header["HIERARCH TIMING READOUT TIME"] / 2, format="sec")# start_time is now time that the frame before the first frame was halfway through readout
+        self.start_time += TimeDelta(hdul[1].header["HIERARCH EXPOSURE TIME"] / 2, format="sec")# start_time is offset by half the exposure
 
     def apply_timing_offset(self, timing_offset=0):
         """
@@ -290,7 +289,7 @@ class DataSet:
         timing_offset : float
             Time offset, in seconds
         """
-        self.start_time -= timing_offset
+        self.start_time -= TimeDelta(timing_offset, format="sec")
 
     def stack(self, **kwargs):
         """
@@ -320,9 +319,9 @@ class DataSet:
                 these_timestamps = []
                 for timestamp in hdul[2].data["TIMESTAMP"]:
                     for frame_index in range(self.frames_per_bundle):
-                        these_timestamps.append(np.float64(timestamp) + frame_index*self.seconds_per_frame + self.start_time)
+                        these_timestamps.append(np.float64(timestamp) + frame_index*self.seconds_per_frame)
             timestamps = np.concatenate([timestamps, these_timestamps])
-        return timestamps
+        return self.start_time + TimeDelta(timestamps, format='sec')
     
     def get_pixel_properties(self, noise_distro):
         """

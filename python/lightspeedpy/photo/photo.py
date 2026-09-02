@@ -4,6 +4,7 @@ from multiprocessing import Pool
 from astropy.io import fits
 from astropy.time import Time
 from ..cli import get_dataset
+from ..psf_utils import make_psf_image
 from ..regions import Region
 from ..constants import FORBIDDEN_KEYWORDS
 from ..weight import Weighter, PixelLayout
@@ -17,7 +18,7 @@ def get_photometry(args):
 
     src_reg = Region.load(args.src)
     if args.bkg is None:
-        raise NotImplementedError()
+        bkg_reg = None
     else:
         bkg_reg = Region.load(args.bkg)
 
@@ -180,7 +181,7 @@ def make_photometry(data_set, src_reg, bkg_reg, mode, rebin, n_electrons=3, n_it
         The data set of the observation
     src_reg: Region
         The region to be used for the target
-    bkg_reg: Region
+    bkg_reg: Region, optional
         The region to be used for the target background. If set to None, PSF weighting will be used
     mode: str
         The mode to extract photometry with
@@ -193,6 +194,16 @@ def make_photometry(data_set, src_reg, bkg_reg, mode, rebin, n_electrons=3, n_it
         The photometry object, corrected for internal quantum efficiency
     """
 
+    if bkg_reg is None:
+        if mode != "weight":
+            raise Exception("PSF weighting can only be used in weight mode")
+        psf_image = make_psf_image(data_set, src_reg, extend_region=True)
+        return make_photometry_psf(data_set, src_reg, psf_image, mode, rebin, n_electrons, n_iterations, seed)
+    else:
+        return make_photometry_no_psf(data_set, src_reg, bkg_reg, mode, rebin, n_electrons, n_iterations, seed)
+
+
+def make_photometry_no_psf(data_set, src_reg, bkg_reg, mode, rebin, n_electrons, n_iterations, seed):
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     src_mask = src_reg.contains(xs, ys)
     bkg_mask = bkg_reg.contains(xs, ys)
@@ -262,6 +273,72 @@ def make_photometry(data_set, src_reg, bkg_reg, mode, rebin, n_electrons=3, n_it
             times.append(frame_start + frame.duration)
             fluxes.append(flux / frame.duration)
             flux = 0
+
+    fluxes = np.array(fluxes) # Source photons per second
+    times = np.array(times)
+
+    return Photometry.from_data_set(data_set, times, fluxes, duration*rebin, int(np.round(mjd_refi.mjd)))
+
+
+def make_photometry_psf(data_set, src_reg, psf_image, mode, rebin, n_electrons, n_iterations, seed):
+    xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
+    src_mask = src_reg.contains(xs, ys)
+    if seed is not None:
+        rng = np.random.default_rng(seed=seed)
+    else:
+        rng = None
+
+    # Make the weight matrix
+    layout = PixelLayout.image(data_set, mask=src_mask)
+    psf_image[~src_mask] = 0
+    psf_image /= np.sum(psf_image)
+    weight_matrix = np.zeros((np.sum(src_mask), 2))
+    weight_matrix[:,0] = psf_image[src_mask] # Source weights
+    weight_matrix[:,1] = 1 / np.sum(src_mask) # Background weights
+    weighter = Weighter(layout, n_electrons, weight_matrix)
+
+    times = []
+    fluxes = []
+    duration = None
+    mjd_refi = None
+    rebin_index = 0
+    rolling_frame = np.zeros(data_set.image_shape)
+    for frame in data_set:
+        if duration is None:
+            mjd_refi = Time(int(frame.timestamp.mjd), format="mjd", scale=frame.timestamp.scale)
+            duration = frame.duration
+        frame_start = (frame.timestamp-mjd_refi).jd * 86_400
+        frame_start -= frame.duration/2
+        if duration is None:
+            times.append(frame_start)
+
+        # import matplotlib.pyplot as plt
+        # import time
+        # fig, axs = plt.subplots(ncols=2, sharex=True, sharey=True)
+        # image_copy = np.copy(frame.image)
+        # image_copy[~src_mask] = 0
+        # rolling_frame += image_copy
+        # axs[0].imshow(rolling_frame, vmin=0)
+        # axs[1].imshow(psf_image, vmin=0)
+        # axs[0].set_xlim(1050, 1150)
+        # axs[0].set_ylim(320, 400)
+        # fig.savefig("dbg.png")
+        # plt.close("all")
+        # time.sleep(0.25)
+
+        rebin_index = (rebin_index + 1) % rebin
+
+        if rng is None:
+            weighter.add_pixels(frame.image[src_mask])
+        else:
+            arg_selection = rng.integers(0, np.sum(src_mask), np.sum(src_mask))
+            weighter.add_pixels(frame.image[src_mask][arg_selection], histogram_indices=arg_selection)
+
+        if rebin_index == 0:
+            src_flux, bkg_flux = weighter.get_fluxes(n_iterations)
+            weighter.clear()
+            times.append(frame_start + frame.duration)
+            fluxes.append(src_flux / frame.duration)
 
     fluxes = np.array(fluxes) # Source photons per second
     times = np.array(times)

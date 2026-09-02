@@ -14,7 +14,7 @@ class DataSetIteratorRet:
         return DataSetIterator(self.data_set, **self.kwargs)
 
 class DataSetIterator:
-    def __init__(self, data_set, cut_cr=True, max_frames=None, cr_thresh=20, bar_color="white"):
+    def __init__(self, data_set, cut_cr=True, max_frames=None, cr_thresh=20, bar_color="white", cr_ceil=None):
         self.data_set = data_set
         self.cut_cr = cut_cr
         self.max_frames = max_frames
@@ -24,6 +24,7 @@ class DataSetIterator:
         self.first_run = True
         self.total_frame_index = 0
         self.cr_thresh = cr_thresh
+        self.cr_ceil = cr_ceil
         self.bias = self.data_set.get_pixel_properties(False).bias
 
         self._renew_file()
@@ -85,7 +86,9 @@ class DataSetIterator:
 
         if self.data_set.dark is not None:
             image -= self.data_set.dark * self.data_set.seconds_per_frame
-        if self.cut_cr:
+        if self.cr_ceil is not None:
+            image[image > self.cr_ceil] = np.nan
+        elif self.cut_cr:
             cosmic_ray_filter(image, self.cr_thresh)
 
         # Don't flat or QE correct; that should be post-processing

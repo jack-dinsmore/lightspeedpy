@@ -63,6 +63,8 @@ class DataSet:
         Cut cosmic rays. Default: True
     cr_thresh: int, optional
         Cosmic ray cutting threshold. Default: 20
+    cr_ceil : int, optional
+        Perform a simple CR cut where everything above this value (electrons) is cut
     """
     def __init__(self, filenames, bbox=None, **kwargs):
         if len(filenames) == 0:

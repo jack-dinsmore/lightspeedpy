@@ -6,19 +6,19 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from ..qe import QuantumEfficiency
 from ..constants import PIXEL_SIZE, FORBIDDEN_KEYWORDS
-from ..util import from_hms, from_dms
-from ..weight import Weighter
+from ..weight import Weighter, PixelLayout
+from ..util import from_hms, from_dms, Matrix
 
 FLAT_NAN_THRESHOLD = 0.02
 
 class Image:
     """
-    Create an image. The input should be in units of total electrons detected.
+    Create an image.
     
     Parameters
     ----------
     image : array-like
-        Image array
+        Image array, in units of total electrons detected.
     data_set : DataSet
         Data set from which the image was derived
     n_frames : int or array-like
@@ -173,7 +173,9 @@ def make_image(data_set, method, n_electrons, n_iterations):
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
     if method == "weight":
-        weighter = Weighter(data_set, np.prod(image.shape), n_electrons, one_to_one=True)
+        layout = PixelLayout.image(data_set)
+        weight_matrix = Matrix.identity(layout.n_pixels)
+        weighter = Weighter(layout, n_electrons, weight_matrix)
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)
@@ -184,13 +186,13 @@ def make_image(data_set, method, n_electrons, n_iterations):
         elif method == "clip":
             image[good_mask] += np.round(masked_image)
         elif method == "weight":
-            weighter.add_pixels(masked_image, np.where(good_mask.reshape(-1))[0], good_mask)
+            weighter.add_pixels(frame.image)
         else:
             raise Exception(f"Unrecognized method {method}")
         n_frames[good_mask] += 1
 
     if method == "weight":
-        image = weighter.get_fluxes(n_iterations).reshape(data_set.image_shape)
+        image = weighter.get_fluxes(n_iterations).reshape(data_set.image_shape) * n_frames
     else:
         qe = QuantumEfficiency()
         image = qe.get_inverse(image)

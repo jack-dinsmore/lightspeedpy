@@ -22,6 +22,8 @@ def get_dataset(args):
     kwargs = {}
     if args.allow_cr:
         kwargs["cut_cr"] = False
+    if args.cr_ceil:
+        kwargs["cr_ceil"] = args.cr_ceil
     data_set = DataSet.from_first(args.input, bbox=bbox, min_index=min_index, max_index=max_index, **kwargs)
     data_set.apply_timing_offset(args.timing_offset)
 
@@ -85,6 +87,7 @@ def add_dataset_args(parser):
     parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
     parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
     parser.add_argument("--allow-cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--cr-ceil", help="Maximum number of electrons to accept before marking the pixel as a CR", type=int)
     parser.add_argument("--bbox", help="Rectangular region to use as the region of interest")
 
 def add_method_args(parser):

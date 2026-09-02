@@ -2,46 +2,15 @@ import numpy as np
 from astropy.io import fits
 import copy, os
 from multiprocessing import Pool
+from astropy.time import Time
 from ..cli import get_dataset
+from ..psf_utils import make_psf_image
 from ..regions import Region, CircleRegion, EllipseRegion
 from ..ephemeris import Ephemeris
 from ..constants import FORBIDDEN_KEYWORDS
 from ..weight import Weighter, PixelLayout
 
 N_BOOTSTRAP = 8 # Number of LCs to use for boostrapped errors
-
-def make_psf_image(data_set, reg_file):
-    """
-    Returns an image which contains the PSF weights for each pixel given the PSF shape contained in reg_file.
-
-    Parameters
-    ----------
-    data_set: DataSet
-        Data set to be processed. This is used to get the shape of the full frame
-    reg_file: str
-        File that contains the PSF shape. The shape should be a ciao-format region file, either circular or elliptical, which should define the FWHM.
-    """
-    xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
-    region = Region.load(reg_file)
-    if type(region) is CircleRegion:
-        fwhm_pixels = np.sqrt(region.radius2)
-        sigma_x = fwhm_pixels / 1.178
-        sigma_y = fwhm_pixels / 1.178
-        theta = 0
-    elif type(region) is EllipseRegion:
-        sigma_x = region.a / 1.178
-        sigma_y = region.b / 1.178
-        theta = region.angle
-    else:
-        raise Exception("PSF weighting can only be performed with elliptical or circular regions")
-
-    rot = np.array([[np.sin(theta), np.cos(theta)], [-np.cos(theta), np.sin(theta)]])
-    inv_cov = rot @ np.diag([1/sigma_x**2, 1/sigma_y**2]) @ np.transpose(rot)
-    vec = np.array([xs - region.x, ys - region.y])
-    gauss_exp = np.einsum("iab,ij,jab->ab", vec, inv_cov, vec)
-    image = np.exp(-gauss_exp / 2)
-
-    return image
 
 def delta_phase(phase_start, phase_end):
     """
@@ -72,15 +41,7 @@ def get_lc(args):
     roi = Region.load(args.roi)
     psf_image = None
     if args.psf:
-        psf_image = make_psf_image(data_set, args.roi)
-        # Triple the size of the PSF to get the ROI
-        if type(roi) is CircleRegion:
-            roi.radius2 *= 3**2
-        elif type(roi) is EllipseRegion:
-            roi.a *= 3
-            roi.b *= 3
-        else:
-            raise Exception("PSF weighting can only be performed with elliptical or circular regions")
+        psf_image = make_psf_image(data_set, roi, extend_region=True)
 
     if args.errors is None:
         lc = make_lc(data_set, roi, ephemeris, args.bins, args.mode, psf_image, args.n_electrons, args.n_iterations)
@@ -145,7 +106,7 @@ def accumulate_bootstrap_lcs(lcs):
     lc_std *= np.nanmax(lc_m1) - np.nanmin(lc_m1)# Convert the error back to normal light curve space
 
     main_lc = lcs[0]
-    main_lc.exposures = lc_m0 / N_LCS
+    main_lc.exposures = lc_m0 / N_BOOTSTRAP
     main_lc.flux = lc_m1
     main_lc.errors = lc_std
     return main_lc
@@ -316,7 +277,10 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
     phase_edges = np.linspace(0, 1, n_bins+1)
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     roi_mask = roi.contains(xs, ys)
-    if psf_image is None:
+    if psf_image is not None:
+        if mode != "weight":
+            raise Exception("PSF weighting can only be used in weight mode")
+    else:
         psf_image = np.ones(data_set.image_shape)
     psf_image[~roi_mask] = 0
     psf_image /= np.sum(psf_image)

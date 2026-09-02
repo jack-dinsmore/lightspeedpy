@@ -3,13 +3,12 @@ import os
 from scipy.interpolate import interp1d
 from scipy.special import binom, factorial
 import tqdm
+from .constants import TRAP_T, TRAP_P
 
 QE_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "qe.csv"))
 P_EPSILON_GAMMA_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "tmp", "p_epsilon_gamma.npy"))
 MAX_ELECTRONS = 8200
 MAX_CALC_N = 100
-TRAP_N = 4
-TRAP_P = 0.11
 
 class QuantumEfficiency:
     """Class to store information about the QE"""
@@ -26,21 +25,21 @@ class QuantumEfficiency:
         if not os.path.exists(P_EPSILON_GAMMA_LOCATION):
             p_epsilon_gamma = np.zeros((MAX_ELECTRONS, MAX_ELECTRONS))
             for gamma in tqdm.tqdm(range(MAX_CALC_N), colour="green"):
-                n_caught = np.zeros(TRAP_N+1)
+                n_caught = np.zeros(TRAP_T+1)
                 n_trial = 50_000
-                sites_used = np.zeros((n_trial, TRAP_N), bool)
+                sites_used = np.zeros((n_trial, TRAP_T), bool)
                 for _ in range(gamma):
-                    catch = (np.random.random((n_trial, TRAP_N)) < TRAP_P) & (~sites_used)
+                    catch = (np.random.random((n_trial, TRAP_T)) < TRAP_P) & (~sites_used)
                     photoelectron_caught = np.any(catch, axis=1)
                     trap_index = np.argmax(catch, axis=1)[photoelectron_caught]
                     sites_used[np.where(photoelectron_caught)[0], trap_index] = True
                 n_caught = np.sum(sites_used, axis=1)
-                catch_prob = np.histogram(n_caught, np.arange(TRAP_N+2)-0.5, density=True)[0]
-                for n in range(TRAP_N + 1):
+                catch_prob = np.histogram(n_caught, np.arange(TRAP_T+2)-0.5, density=True)[0]
+                for n in range(TRAP_T + 1):
                     p_epsilon_gamma[gamma-n, gamma] = catch_prob[n]
 
             for gamma in range(MAX_CALC_N, MAX_ELECTRONS):
-                p_epsilon_gamma[gamma - TRAP_N, gamma] = 1
+                p_epsilon_gamma[gamma - TRAP_T, gamma] = 1
 
             np.save(P_EPSILON_GAMMA_LOCATION, p_epsilon_gamma)
         return np.load(P_EPSILON_GAMMA_LOCATION)

@@ -1,0 +1,102 @@
+# This is where all the functions that take "args" as an argument go
+import os, argparse
+from astropy.io import fits
+from .dataset import DataSet
+from .pixel_properties import PixelProperties
+
+def get_dataset(args):
+    """
+    Get the :class:`DataSet` from an `argparse` parser, assuming the arguments correspond to those created by :func:`cli.add_dataset_args`.
+
+    Parameters
+    ----------
+    args : argparse args
+        Command line arguments
+    """
+    if os.path.exists(args.output) and not args.clobber:
+        raise Exception(f"Cannot save to {args.output}: file already exists and clobber is False")
+    
+    min_index = None if args.min_index is None else int(args.min_index)
+    max_index = None if args.max_index is None else int(args.max_index)
+    bbox = None if args.bbox is None else args.bbox
+    kwargs = {}
+    if args.allow_cr:
+        kwargs["cut_cr"] = False
+    if args.cr_ceil:
+        kwargs["cr_ceil"] = args.cr_ceil
+    data_set = DataSet.from_first(args.input, bbox=bbox, min_index=min_index, max_index=max_index, **kwargs)
+    data_set.apply_timing_offset(args.timing_offset)
+
+    print("Loaded files")
+    data_set.display_filenames()
+    if not args.bias:
+        print("WARNING: No bias provided")
+
+    def set_bias(ds):
+        # Sets the bias for an observation
+        if args.bias is not None:
+            is_pix_prop = False
+            if os.path.exists(args.bias):
+                with fits.open(args.bias) as hdul:
+                    if "PIXPROP" in hdul[0].header and hdul[0].header["PIXPROP"] == "T":
+                        is_pix_prop = True
+            if is_pix_prop:
+                ds.set_bias(PixelProperties.load(args.bias))
+            else:
+                ds.set_bias(DataSet.from_first(args.bias, cut_cr=False, bar_color='green'))
+
+    set_bias(data_set)
+
+    if args.dark is not None:
+        try:
+            dark = DataSet.from_first(args.dark, cr_thresh=50)
+        except:
+            dark = DataSet([args.dark])
+        set_bias(dark)
+        data_set.set_dark(dark)
+    else:
+        print("WARNING: No dark provided")
+
+    if args.flat is not None:
+        try:
+            flat = DataSet.from_first(args.flat, cut_cr=False)
+        except:
+            flat = DataSet([args.flat])
+        set_bias(flat)
+        data_set.set_flat(flat)
+    else:
+        print("WARNING: No flat provided")
+    return data_set
+
+def add_dataset_args(parser):
+    """
+    Add the standard lightspeedpy arguments to an `argparse` parser. These include input, output, bias, self-bias, flat, flat, frames, timing-offset, and clobber.
+
+    Parameters
+    ----------
+    parser : argparse parser
+        Parser to which to add arguments
+    """
+    parser.add_argument("--input", required=True, help="Name of the cube001 file")
+    parser.add_argument("--output", required=True, help="File name of output image")
+    parser.add_argument("--bias", help="File name of bias")
+    parser.add_argument("--dark", help="File name of dark")
+    parser.add_argument("--flat", help="File name of flat")
+    parser.add_argument("--min-index", help="Minimum cube index")
+    parser.add_argument("--max-index", help="Maximum cube index")
+    parser.add_argument("--timing-offset", help="Optional offset to apply to the start time (seconds)", type=float, default=0)
+    parser.add_argument("--clobber", help="Set to allow overwrite", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--allow-cr", help="Set to stop cutting cosmic rays", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--cr-ceil", help="Maximum number of electrons to accept before marking the pixel as a CR", type=int)
+    parser.add_argument("--bbox", help="Rectangular region to use as the region of interest")
+
+def add_method_args(parser):
+    parser.add_argument("--n-iterations", type=int, default=25, help="(Weight method) Number of iterations to use")
+    parser.add_argument("--n-electrons", type=int, default=3, help="(Weight method) Number of electrons to simulate. Should be larger than the expected electrons per pixel.")
+    parser.add_argument('--mode',
+                    default='sum',
+                    const='sum',
+                    nargs='?',
+                    choices=['sum', 'clip', 'weight'],
+                    help='Analysis mode (sum, clip, or weight. Default: sum)'
+    )

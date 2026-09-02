@@ -5,6 +5,7 @@ __pycache__/
 tmp
 tests/
 rust-files/
+docs/_build
 
 *.so
 *.egg-info

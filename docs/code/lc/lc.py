@@ -1,0 +1,313 @@
+import numpy as np
+from astropy.io import fits
+import copy, os
+from multiprocessing import Pool
+from astropy.time import Time
+from ..cli import get_dataset
+from ..psf_utils import make_psf_image
+from ..regions import Region, CircleRegion, EllipseRegion
+from ..ephemeris import Ephemeris
+from ..constants import FORBIDDEN_KEYWORDS
+from ..weight import Weighter, PixelLayout
+
+N_BOOTSTRAP = 8 # Number of LCs to use for boostrapped errors
+
+def delta_phase(phase_start, phase_end):
+    """
+    Get the difference in phase between start and end, accounting for phases that wrap around.
+    """
+    if phase_end > phase_start:
+        return phase_end - phase_start
+    else:
+        return 1 - (phase_start - phase_end)
+
+def make_bootstrap_lc(seed, data_set_orig, roi, ephemeris, args, psf_image):
+    """
+    Get a light curve from a randomly drawn boostrapped sample of the data set
+    """
+    data_set = copy.deepcopy(data_set_orig)
+    data_set.bootstrap(seed)
+    lc = make_lc(data_set, roi, ephemeris, args.bins, args.mode, psf_image, args.n_electrons, args.n_iterations)
+    return lc
+
+def get_lc(args):
+    """
+    Run the light curve extraction program
+    """
+    data_set = get_dataset(args)
+    print("Load files")
+    data_set.display_filenames()
+    ephemeris = Ephemeris(args.eph, data_set, args.observatory)
+    roi = Region.load(args.roi)
+    psf_image = None
+    if args.psf:
+        psf_image = make_psf_image(data_set, roi, extend_region=True)
+
+    if args.errors is None:
+        lc = make_lc(data_set, roi, ephemeris, args.bins, args.mode, psf_image, args.n_electrons, args.n_iterations)
+        save_name = args.output
+        is_slurm = False
+    else:
+        if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
+            lc = make_bootstrap_lc(None, data_set, roi, ephemeris, args, psf_image)
+            if not os.path.exists(args.output[:-5]):
+                os.mkdir(args.output[:-5])
+            save_name = f"{args.output[:-5]}/{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
+            is_slurm = True
+        else:
+            params = []
+            for _ in range(N_BOOTSTRAP):
+                params.append([np.random.randint(2**32), data_set, roi, ephemeris, args, psf_image])
+            with Pool() as pool:
+                lcs = pool.starmap(make_bootstrap_lc, params)
+            lc = accumulate_bootstrap_lcs(lcs)
+            save_name = args.output
+            is_slurm = False
+
+    save_kwargs = vars(args)
+    if "func" in save_kwargs: del save_kwargs["func"]
+    lc.save(save_name, args.clobber, save_kwargs)
+
+    # Perform last step of SLURM light curve addition
+    if is_slurm:
+        lcs = []
+        for task_id in range(1, int(os.environ["SLURM_ARRAY_TASK_COUNT"])+1):
+            filename = f"{args.output[:-5]}/{task_id}.fits"
+            if not os.path.exists(filename):
+                # Not all the threads have finished yet
+                return
+            lcs.append(Lightcurve.load(filename))
+
+        # Save the accumulated light curve
+        lc = accumulate_bootstrap_lcs(lcs)
+        lc.save(args.output, args.clobber, save_kwargs)
+        
+
+def accumulate_bootstrap_lcs(lcs):
+    """
+    Accumulate bootstrapped LCs into one LC with errors
+    """
+    lc_m0 = np.zeros_like(lcs[0].flux)
+    lc_m1 = np.zeros_like(lcs[0].flux)
+    lc_normalized_m1 = np.zeros_like(lcs[0].flux)
+    lc_normalized_m2 = np.zeros_like(lcs[0].flux)
+    for lc in lcs:
+        lc_normalized = np.copy(lc.flux)
+        lc_normalized -= np.min(lc_normalized)
+        lc_normalized /= np.max(lc_normalized)
+        lc_m0 += lc.exposures
+        lc_m1 += lc.flux * lc.exposures
+        lc_normalized_m1 += lc_normalized * lc.exposures
+        lc_normalized_m2 += lc_normalized * lc_normalized * lc.exposures
+    lc_m1 /= lc_m0
+    lc_normalized_m1 /= lc_m0
+    lc_normalized_m2 /= lc_m0
+    lc_std = np.sqrt(lc_normalized_m2 - lc_normalized_m1**2) * np.sqrt(N_BOOTSTRAP / (N_BOOTSTRAP - 1))
+    lc_std *= np.nanmax(lc_m1) - np.nanmin(lc_m1)# Convert the error back to normal light curve space
+
+    main_lc = lcs[0]
+    main_lc.exposures = lc_m0 / N_BOOTSTRAP
+    main_lc.flux = lc_m1
+    main_lc.errors = lc_std
+    return main_lc
+
+def add_lc(args):
+    """
+    Run the light curve addition program
+    """
+    lc = None
+    for arg in args.inputs:
+        if lc is None:
+            lc = Lightcurve.load(arg)
+        else:
+            lc += Lightcurve.load(arg)
+    lc.save(args.output, clobber=args.clobber)
+
+class Lightcurve:
+    """
+    Class to store light curves and save them
+    """
+    def __init__(self, edges, flux, exposures, nu, header0, header1, duration, errors=None):
+        self.edges = edges
+        self.flux = flux
+        self.exposures = exposures
+        if errors is None:
+            self.errors = np.zeros(len(flux))
+        else:
+            self.errors = errors
+        self.duration = duration
+        self.nu = nu
+        self.header0 = header0
+        self.header1 = header1
+
+    def from_data_set(data_set, edges, flux, exposures, eph):
+        """
+        Create a light curve object from a data set
+
+        Parameters
+        ----------
+        data_set: DataSet
+            Data set object
+        edges : array-like
+            Edges of the phase bins of the light curve
+        fluxes : array-like
+            Flux in each light curve bin. If edges has length N+1, fluxes should have length N
+        exposures : array-like
+            Time in seconds spent in each bin
+        duration : array-like
+            Duration of each frame, in seconds
+        eph : Ephemeris
+            Target ephemeris
+        """
+        for frame in data_set.iterator(bar_color=None):
+            duration = frame.duration
+            break
+        return Lightcurve(edges, flux, exposures, eph.nu, data_set.header0, data_set.header1, duration)
+
+    def load(filename):
+        """
+        Load a light curve from a fits file
+        
+        Parameters
+        ----------
+        filename : str
+            Name of the light curve file
+        """
+        with fits.open(filename) as hdul:
+            header0 = hdul[0].header
+            header1 = hdul[1].header
+            edges = np.array(hdul[1].data["PHASELO"])
+            edges = np.append(edges, hdul[1].data["PHASEHI"][-1])
+            flux = np.array(hdul[1].data["FLUX"])
+            errors = np.array(hdul[1].data["ERROR"])
+            exposures = np.array(hdul[1].data["EXPOSURE"])
+            duration = hdul[1].header["DURATION"]
+            nu = hdul[1].header["NU"]
+        return Lightcurve(edges, flux, exposures, nu, header0, header1, duration, errors)
+    
+    def __iadd__(self, other):
+        if len(self.edges) != len(other.edges) or np.any(self.edges != other.edges):
+            raise Exception("Cannot add light curves with different edges")
+        self_weight = self.exposures / (self.exposures + other.exposures)
+        other_weight = other.exposures / (self.exposures + other.exposures)
+        self.exposures += other.exposures
+        self.flux = self.flux * self_weight + other.flux * other_weight
+        self.flux = self.flux * self_weight + other.flux * other_weight
+        self.errors = np.sqrt(self.errors**2 * self_weight**2 + other.errors**2 * other_weight**2)
+        if self.duration != other.duration:
+            self.duration = 0
+        return self
+
+    def save(self, filename, clobber=False, save_kwargs=None):
+        """
+        Save the light curve to a file
+        
+        Parameters
+        ----------
+        filename : str
+            The file name to which the light curve should be saved
+        clobber : bool, optional
+            Set to True to allow overwriting
+        save_kwargs : dict, optional
+            Dictionary of keywords to write to the light curve header
+        """
+        cols = [
+            fits.Column(name='PHASEHI', array=self.edges[1:], format='E'),
+            fits.Column(name='PHASELO', array=self.edges[:-1], format='E'),
+            fits.Column(name='FLUX', array=self.flux, format='E'),
+            fits.Column(name='ERROR', array=self.errors, format='E'),
+            fits.Column(name='EXPOSURE', array=self.exposures, format='E'),
+        ]
+        hdu = fits.BinTableHDU.from_columns(cols)
+
+        hdu.header["EXPTIME"] = np.sum(self.exposures)
+        hdu.header["DURATION"] = self.duration
+        hdu.header["NU"] = self.nu
+
+        if "GPSSTART" in self.header0:
+            hdu.header["GPSSTART"] = self.header0["GPSSTART"]
+
+        for key, value in self.header1.items():
+            if key in FORBIDDEN_KEYWORDS: continue
+            if len(key) > 8: key = f"HIERARCH {key}"
+            hdu.header[key] = value
+
+        if save_kwargs is not None:
+            for key, value in save_kwargs.items():
+                if type(value) is list:
+                    for i, item in enumerate(value):
+                        key = f"{key}{i}"
+                        if len(key) > 8: key = f"HIERARCH {key}"
+                        hdu.header[f"{key}{i}"] = item
+                    continue
+                if len(key) > 8: key = f"HIERARCH {key}"
+                hdu.header[key] = value
+
+        # Write to file, table in HDU 1
+        hdul = fits.HDUList([fits.PrimaryHDU(), hdu])
+        hdul.writeto(filename, overwrite=clobber)
+
+def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=3, n_iterations=25):
+    """
+    Get the light curve of a source by summing all the detected photons per frame
+    
+    Parameters
+    ----------
+    data_set : DataSet
+        The data set of the observation
+    n_bins : int
+        Number of light curve bins to use
+    reg_file : str
+        The ciao-format, physical coordinate region file containing the source
+    ephemeris : Ephemeris
+        The source ephemeris
+    mode : str
+        Either "sum", "clip", or "weight", specifying the method of LC generation
+    psf_image : array, optional
+        PSF image used for weighting. The image is only used when doing pixel weighting.
+    
+    Returns
+    -------
+    Lightcurve
+        The light curve object, corrected for internal quantum efficiency
+    """
+
+    electrons = np.zeros(n_bins)
+    exposures = np.zeros(n_bins)
+    phase_edges = np.linspace(0, 1, n_bins+1)
+    xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
+    roi_mask = roi.contains(xs, ys)
+    if psf_image is not None:
+        if mode != "weight":
+            raise Exception("PSF weighting can only be used in weight mode")
+    else:
+        psf_image = np.ones(data_set.image_shape)
+    psf_image[~roi_mask] = 0
+    psf_image /= np.sum(psf_image)
+
+    if mode == "weight":
+        pixel_layout = PixelLayout.light_curve(data_set, n_bins, roi_mask)
+        weighter = Weighter(pixel_layout, n_electrons, psf_image[roi_mask].reshape(-1, 1))
+
+    for frame in data_set:
+        mid_phase = ephemeris.get_phase(frame.timestamp)
+        bin_index = np.digitize(mid_phase, phase_edges) - 1
+        exposures[bin_index] += frame.duration
+        if mode == "sum":
+            mask = roi_mask & np.isfinite(frame.image)
+            electrons[bin_index] += np.nansum(frame.image[mask])
+        elif mode == "clip":
+            mask = roi_mask & np.isfinite(frame.image)
+            electrons[bin_index] += np.nansum(np.round(frame.image[mask]))
+        elif mode == "weight":
+            # Flux means number of photons per frame
+            weighter.add_pixels(frame.image[roi_mask], time_index=bin_index)
+        else:
+            raise Exception(f"Unrecognized method {mode}")
+
+    if mode == "sum" or mode == "clip":
+        fluxes = electrons / exposures # Counts per second for total source
+    else:
+        fluxes = weighter.get_fluxes(n_iterations) / frame.duration # Counts per second for total source
+
+    return Lightcurve.from_data_set(data_set, phase_edges, fluxes, exposures, ephemeris)

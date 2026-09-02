@@ -1,0 +1,400 @@
+import numpy as np
+import os, copy
+from astropy.io import fits
+from astropy.time import Time, TimeDelta
+from .frame import DataSetIteratorRet
+from .pixel_properties import PixelProperties
+from .qe import QuantumEfficiency
+from .regions import Region, BoxRegion
+
+DEFAULT_TIME = "2025-09-13 06:00:00.00429"
+
+def is_header_equal(h1, h2):
+    """
+    This function tests whether the headers h1 and h2 correspond to the same observation. Some header keywords change between cubes, and these are not tested."""
+    for key in h1:
+        if key in ["CUBEIDX", "TELRA", "TELDEC", "TELROT", "TELPA", "ROTENC", "TELEL", "TELAZ", "TELHA", "TELST", "TELUT", "AIRMASS", "NAXIS3"]: continue
+        if h1[key] != h2[key]:
+            return False
+    return True
+
+def load_bbox(filename, raw_image_shape):
+    region = Region.load(filename)
+    if type(region) is not BoxRegion:
+        raise Exception("The crop region must be an unrotated rectangle")
+    if region.angle != 0:
+        raise Exception("The crop region must be an unrotated rectangle")
+    bbox = [
+        int(region.y - region.w/2),
+        int(region.y + region.w/2),
+        int(region.x - region.l/2),
+        int(region.x + region.l/2),
+    ]
+    bbox[0] = max(bbox[0], 0)
+    bbox[1] = min(bbox[1], raw_image_shape[0]-1)
+    bbox[2] = max(bbox[2], 0)
+    bbox[3] = min(bbox[3], raw_image_shape[1]-1)
+    return bbox
+
+class DataSet:
+    """
+    Contains metadata relating to one contiguous LightSpeed observation. The data set is never loaded into memory, so many-GB observations can be treated.
+
+    There are three ways to initialize a :class:`DataSet`:
+     
+    1. Use :meth:`DataSet.from_first` to create a data set of all files in the capture
+    2. Use :meth:`DataSet.from_dir` to create a data set out of all the files in a directory
+    3. Use the constructor and pass all the files you want to be in the data set as a parameter.
+
+    The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
+
+    Parameters
+    ----------
+    filenames : list of str
+        List of files to include
+    bbox: string, optional
+        Region to use for cropping the field of view
+
+    max_frames : int, optional
+        Maximum number of frames to iterate through. Default: all the frames
+    bar_color : str or None
+        Color of the progress bar. If None, no color bar will be shown.
+    cut_cr : bool, optional
+        Cut cosmic rays. Default: True
+    cr_thresh: int, optional
+        Cosmic ray cutting threshold. Default: 20
+    cr_ceil : int, optional
+        Perform a simple CR cut where everything above this value (electrons) is cut
+    """
+    def __init__(self, filenames, bbox=None, **kwargs):
+        if len(filenames) == 0:
+            raise Exception("You must provide at least one filename")
+        
+        # Check the headers to make sure they are all the same
+        self.filenames = np.sort(filenames)
+        self.frames = []
+        with fits.open(self.filenames[0]) as hdul:
+            self.header0 = hdul[0].header
+            self.header1 = hdul[1].header
+            self._get_image_data(hdul)
+            self._get_timing_data(hdul)
+            self.frames.append(hdul[1].shape[0] * self.frames_per_bundle)
+
+        if bbox is not None:
+            self.bbox = load_bbox(bbox, self.raw_image_shape)
+            self.image_shape = (self.bbox[1] - self.bbox[0], self.bbox[3] - self.bbox[2])
+        else:
+            self.bbox = None
+            self.image_shape = self.raw_image_shape
+
+        for filename in self.filenames[1:]:
+            with fits.open(filename) as hdul:
+                self.frames.append(hdul[1].shape[0] * self.frames_per_bundle)
+                if not is_header_equal(self.header0, hdul[0].header) or not is_header_equal(self.header1, hdul[1].header):
+                    raise Exception(f"File {filename} had a different header. Lightspeedpy does not currently support this.")
+        self.frames = np.array(self.frames)
+        
+        self._pixel_properties = None
+        self.bias = None
+        self.dark = None
+        self.flat = None
+        self.noises = None
+        self.iter_kwargs = kwargs
+        self.auto_bias = False
+
+    def from_first(filename, bbox=None, min_index=None, max_index=None, **kwargs):
+        """
+        Create a :class:`DataSet` for all files in a capture. The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
+
+        Parameters
+        ----------
+        filenames : list of str
+            List of files to include
+        bbox: string, optional
+            Region to use for cropping the field of view
+        min_index: int, optional
+            Minimum cube index to load
+        bbox: string, optional
+            Maximum cube index to load
+
+        max_frames : int, optional
+            Maximum number of frames to iterate through. Default: all the frames
+        bar_color : bool, optional
+            Show a progress bar. Default: True.
+        cut_cr : bool, optional
+            Cut cosmic rays. Default: True
+        cr_thresh: int, optional
+            Cosmic ray cutting threshold. Default: 20
+        """
+        directory = os.path.dirname(filename)
+        filename = os.path.basename(filename)
+        prefix = filename[:-8]
+
+        filenames = []
+        indices = []
+        for f in os.listdir(directory):
+            if not f.startswith(prefix): continue
+            index = int(f[len(prefix):-5])
+            if min_index is not None and index < min_index: continue
+            if max_index is not None and index > max_index: continue
+            filenames.append(f"{directory}/{f}")
+            indices.append(index)
+        if len(filenames) == 0:
+            raise Exception(f"No filenames with these criteria exist")
+        
+        filenames = np.array(filenames)[np.argsort(indices)]
+        return DataSet(filenames, bbox, **kwargs)
+    
+    def from_dir(directory, bbox=None, **kwargs):
+        """
+        Create a :class:`DataSet` for all files in a directory. The default keyword arguments are the ones you passed when you created the :class:`DataSet`. You can override the defaults by passing new arguments here. You can also pass the following
+
+        Parameters
+        ----------
+        directory : str
+            name of the directory
+        max_frames : int, optional
+            Maximum number of frames to iterate through. Default: all the frames
+        bar_color : str, optional
+            Color of the progress bar. If None, no bar will be shown.
+        cut_cr : bool, optional
+            Cut cosmic rays. Default: True
+        cr_thresh: int, optional
+            Cosmic ray cutting threshold. Default: 20
+        bbox: string, optional
+            Region to use for cropping the field of view
+        """
+        if not os.path.exists(directory):
+            raise Exception(f"The directory {directory} does not exist")
+        
+        filenames = []
+        for f in os.listdir(directory):
+            if not f.endswith(".fits"): continue
+            filenames.append(f"{directory}/{f}")
+
+        if len(filenames) == 0:
+            raise Exception(f"The directory contained no FITS files")
+        
+        return DataSet(filenames, bbox, **kwargs)
+    
+    def iterator(self, **kwargs):
+        """
+        Create an iterator for iterating through all frames in a :class:`DataSet`. 
+
+        Parameters
+        ----------
+        The default keyword arguments are the ones you passed when you created the :class:`DataSet`.       
+        You can override the defaults by passing new arguments here. You can also pass the following
+
+        max_frames : int, optional
+            Maximum number of frames to iterate through. Default: all the frames
+        bar_color : str, optional
+            Color of the progress bar. If None, no bar will be shown.
+        cut_cr : bool, optional
+            Cut cosmic rays. Default: True
+        cr_thresh: int, optional
+            Cosmic ray cutting threshold. Default: 20
+
+        Notes
+        -----
+        ``for frame in data_set.iterator()`` is equivalent to ``for frame in data_set``.
+        """
+        use_kwargs = {} if self.iter_kwargs is None else copy.copy(self.iter_kwargs)
+        for k, v in kwargs.items():
+            use_kwargs[k] = v
+        return DataSetIteratorRet(self, **use_kwargs)
+
+    def __iter__(self):
+        return self.iterator().__iter__()
+    
+    def get_duration(self):
+        for frame in self.iterator(bar_color=None):
+            return frame.duration
+
+    def display_filenames(self):
+        """
+        Print all the filenames in the data set
+        """
+        indices = [int(f[-8:-5]) for f in self.filenames]
+        sorted_frames = np.array(self.frames)[np.argsort(indices)]
+        sorted_filenames = np.array(self.filenames)[np.argsort(indices)]
+        indices = np.array(indices)[np.argsort(indices)]
+
+        # Print all contiguous units
+        breaks = [0]
+        for i in range(1, len(indices)):
+            if indices[i] != indices[i-1]+1:
+                breaks.append(i)
+        breaks.append(len(indices))
+
+        for i in range(len(breaks)-1):
+            start = breaks[i]
+            stop = breaks[i+1]-1
+            if stop - start > 2:
+                print(sorted_filenames[start], f"({sorted_frames[start]} frames)")
+                print("...")
+                print(sorted_filenames[stop], f"({sorted_frames[stop]} frames)")
+            else:
+                for j in range(start, stop+1):
+                    print(sorted_filenames[j], f"({sorted_frames[j]} frames)")
+
+    def bootstrap(self, seed=None):
+        """
+        Resamples the file names for use in bootstrapping. If you want to estimate uncertainties, redo your analysis with many :meth:`DataSet.bootstrap`'ed data sets and calculate the standard deviation of your results.
+
+        Notes
+        -----
+        You should never bootstrap a data set twice. Instead, you should always create a copy of the original data set with copy.deepcopy and then bootstrap the copy.
+        """
+        if seed is not None:
+            np.random.seed(seed)
+        indices = np.random.choice(np.arange(len(self.filenames)), len(self.filenames), replace=True)
+        self.filenames = self.filenames[indices]
+        self.frames = self.frames[indices]
+
+    def num_frames(self):
+        """
+        Counts the number of frames in the data set
+
+        Returns
+        -------
+        int
+            The number of frames in the data set
+        """
+        return np.sum(self.frames)
+    
+    def _get_image_data(self, hdul):
+        if hdul[1].header["HIERARCH FRAMEBUNDLE MODE"] == "OFF":
+            self.frames_per_bundle = 1
+        else:
+            self.frames_per_bundle = int(hdul[1].header["HIERARCH FRAMEBUNDLE NUMBER"])
+
+        self.raw_image_shape = (hdul[1].data.shape[1]//self.frames_per_bundle, hdul[1].data.shape[2])
+
+    def _get_timing_data(self, hdul):
+        # Get timing data for this fileset. Note: this function should only be called on the first cube. _get_image_data has to be run first
+        self.seconds_per_frame = hdul[1].header["HIERARCH EXPOSURE TIME"]
+        try:
+            self.start_time = Time(hdul[0].header["GPSSTART"], format="isot")
+        except:
+            self.start_time = Time(0, format="mjd")
+        # self.start_time -= hdul[2].data["TIMESTAMP"][0] # start_time is now time that the last frame in the first bundle was read out.
+        self.start_time += TimeDelta(hdul[1].header["HIERARCH TIMING READOUT TIME"] / 2, format="sec")# start_time is now time that the frame before the first frame was halfway through readout
+        self.start_time += TimeDelta(hdul[1].header["HIERARCH EXPOSURE TIME"] / 2, format="sec")# start_time is offset by half the exposure
+
+    def apply_timing_offset(self, timing_offset=0):
+        """
+        Apply a timing offset to the data set. Now, a frame read at `timing_offset` will be treated as having time 0.
+
+        Parameters
+        ----------
+        timing_offset : float
+            Time offset, in seconds
+        """
+        self.start_time -= TimeDelta(timing_offset, format="sec")
+
+    def stack(self, **kwargs):
+        """
+        Obtain the average image of the data cube.
+
+        Returns
+        -------
+        array-like
+            The average image of the cube, in electrons.
+
+        Notes
+        ------
+        Same keyword arguments as :class:`DataSet`. For keyword arguments you do not provide, the values you passed to the data set constructor will be used.
+        """
+        frame_total = np.zeros(self.image_shape)
+        n_frames = np.zeros(self.image_shape, int)
+        for frame in self.iterator(**kwargs):
+            goodmask = np.isfinite(frame.image)
+            frame_total[goodmask] += frame.image[goodmask]
+            n_frames[goodmask] += 1
+        return frame_total / n_frames
+
+    def _get_timestamps(self):
+        timestamps = []
+        for filename in self.filenames:
+            with fits.open(filename) as hdul:
+                these_timestamps = []
+                for timestamp in hdul[2].data["TIMESTAMP"]:
+                    for frame_index in range(self.frames_per_bundle):
+                        these_timestamps.append(np.float64(timestamp) + frame_index*self.seconds_per_frame)
+            timestamps = np.concatenate([timestamps, these_timestamps])
+        return self.start_time + TimeDelta(timestamps, format='sec')
+    
+    def get_pixel_properties(self, noise_distro):
+        """
+        Get the pixel properties of the detector
+
+        Parameters
+        ----------
+        noise_distro : bool
+            Set to True if the pixel properties should map the noise distribution of each pixel. This will take more time.
+
+        PixelProperties
+            Pixel properties of the data set
+        """
+        if self._pixel_properties is None or (noise_distro and not self._pixel_properties.has_noise_distro()):
+            # Generate the pixel properties
+            if self.bias is None:
+                if self._pixel_properties is None:
+                    self._pixel_properties = PixelProperties.default(self)
+                else:
+                    raise Exception("The bias you passed did not calculate the noise distribution, but the analysis method you requested requires it")
+            else:
+                self._pixel_properties = PixelProperties.from_bias(self.bias, self, noise_distro)
+
+            if self.bbox is not None:
+                self._pixel_properties.crop(self.bbox)
+
+        return self._pixel_properties
+    
+    def set_bias(self, bias):
+        """
+        Set the bias
+
+        Parameters
+        ----------
+        bias : DataSet or PixelProperties
+            A :class:`DataSet` containing the bias observation, or the :class:`PixelProperties` of the observation
+        """
+        if type(bias) is DataSet:
+            if self._pixel_properties is not None:
+                raise Exception("You set a bias frame after calling a function that calculates the pixel properties. You should do this in the reverse order since get_pixel_properties needs a good bias to function.")
+            self.bias = bias
+        else:
+            self._pixel_properties = bias
+            if self.bbox is not None:
+                self._pixel_properties.crop(self.bbox)
+            self.bias = None
+
+    def set_dark(self, dark_data_set):
+        """
+        Set the dark
+
+        Parameters
+        ----------
+        dark_data_set : DataSet
+            A :class:`DataSet` containing the dark observation
+        """
+        self.dark = dark_data_set.stack() / dark_data_set.seconds_per_frame
+        if self.bbox is not None:
+            self.dark = self.dark[self.bbox[0]:self.bbox[1],self.bbox[2]:self.bbox[3]]
+
+    def set_flat(self, flat_data_set):
+        """
+        Set the flat
+
+        Parameters
+        ----------
+        flat_data_set : DataSet
+            A :class:`DataSet` containing the flat observation
+        """
+        self.flat = flat_data_set.stack()
+        self.flat /= QuantumEfficiency()(self.flat)
+        self.flat /= np.nanmax(self.flat)
+        if self.bbox is not None:
+            self.flat = self.flat[self.bbox[0]:self.bbox[1],self.bbox[2]:self.bbox[3]]

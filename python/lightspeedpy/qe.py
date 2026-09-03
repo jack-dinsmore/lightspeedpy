@@ -74,6 +74,7 @@ class QuantumEfficiency:
         ns = np.arange(0, MAX_ELECTRONS).astype(np.float64)
         return interp1d(ns, values, bounds_error=False)
 
+    @np.errstate(divide='ignore')
     def _p_gamma_lambda_deriv(self, lamb, gamma, k):
         """
         Get the kth derivative of the Poisson distribution wrt lambda evaluated at gamma counts. gamma is a vector, but not lamb and k.

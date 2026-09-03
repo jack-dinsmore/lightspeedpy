@@ -2,10 +2,9 @@ import numpy as np
 from astropy.io import fits
 import copy, os
 from multiprocessing import Pool
-from astropy.time import Time
 from ..cli import get_dataset
 from ..psf_utils import make_psf_image
-from ..regions import Region, CircleRegion, EllipseRegion
+from ..regions import Region
 from ..ephemeris import Ephemeris
 from ..constants import FORBIDDEN_KEYWORDS
 from ..weight import Weighter, PixelLayout
@@ -286,8 +285,9 @@ def make_lc(data_set, roi, ephemeris, n_bins, mode, psf_image=None, n_electrons=
     psf_image /= np.sum(psf_image)
 
     if mode == "weight":
+        histogram_max_electrons = data_set.iter_kwargs["cr_ceil"] if "cr_ceil" in data_set.iter_kwargs else None
         pixel_layout = PixelLayout.light_curve(data_set, n_bins, roi_mask)
-        weighter = Weighter(pixel_layout, n_electrons, psf_image[roi_mask].reshape(-1, 1))
+        weighter = Weighter(pixel_layout, n_electrons, psf_image[roi_mask].reshape(-1, 1), histogram_max_electrons=histogram_max_electrons)
 
     for frame in data_set:
         mid_phase = ephemeris.get_phase(frame.timestamp)

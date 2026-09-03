@@ -45,8 +45,9 @@ def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterat
     if mode == "weight":
         layout = PixelLayout.image(data_set)
         weight_matrix = Matrix.identity(layout.n_pixels)
-        on_weighter = Weighter(layout, n_electrons, weight_matrix)
-        off_weighter = Weighter(layout, n_electrons, weight_matrix)
+        histogram_max_electrons = data_set.iter_kwargs["cr_ceil"] if "cr_ceil" in data_set.iter_kwargs else None
+        on_weighter = Weighter(layout, n_electrons, weight_matrix, histogram_max_electrons=histogram_max_electrons)
+        off_weighter = Weighter(layout, n_electrons, weight_matrix, histogram_max_electrons=histogram_max_electrons)
 
     for frame in data_set:
         phase = ephemeris.get_phase(frame.timestamp)

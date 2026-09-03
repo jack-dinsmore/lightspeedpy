@@ -173,9 +173,10 @@ def make_image(data_set, method, n_electrons, n_iterations):
     image = np.zeros(data_set.image_shape)
     n_frames = np.zeros(data_set.image_shape)
     if method == "weight":
+        histogram_max_electrons = data_set.iter_kwargs["cr_ceil"] if "cr_ceil" in data_set.iter_kwargs else None
         layout = PixelLayout.image(data_set)
         weight_matrix = Matrix.identity(layout.n_pixels)
-        weighter = Weighter(layout, n_electrons, weight_matrix)
+        weighter = Weighter(layout, n_electrons, weight_matrix, histogram_max_electrons=histogram_max_electrons)
 
     for frame in data_set:
         good_mask = ~np.isnan(frame.image)

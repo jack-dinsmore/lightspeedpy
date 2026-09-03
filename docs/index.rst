@@ -28,4 +28,4 @@ For instructions on each of lightspeedpy's plugins, please see
    :caption: Plugin examples
    :glob:
 
-   code/*/docs/*
+   corecode/*/docs/*

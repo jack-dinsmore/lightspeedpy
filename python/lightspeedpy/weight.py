@@ -54,20 +54,20 @@ class PixelLayout:
     def n_histograms(self):
         return len(self.pixel_indices)
 
-    def _get_p_u_epsilon(self, u_bins, epsilons):
-        pixel_probs = np.zeros((self.n_pixels, len(u_bins)-1, len(epsilons)))
+    def _get_p_u_epsilon(self, u_edges, epsilons):
+        pixel_probs = np.zeros((self.n_pixels, len(u_edges)-1, len(epsilons)))
         if self.mask is None:
             image = np.ones(self.pixel_properties.bias.shape)
         else:
             image = np.ones(self.n_pixels)
 
-        u_centers = (u_bins[:-1] + u_bins[1:]) / 2
+        u_centers = (u_edges[:-1] + u_edges[1:]) / 2
         for (i, u) in enumerate(u_centers):
             for (j, epsilon) in enumerate(epsilons):
                 pixel_probs[:,i,j] = self.pixel_properties.get_prob(image * u, epsilon, self.mask).reshape(-1)
         pixel_probs = np.einsum("aue,ae->aue", pixel_probs, 1/np.sum(pixel_probs, axis=1))
 
-        output = np.zeros((len(self.pixel_indices), len(u_bins)-1, len(epsilons)))
+        output = np.zeros((len(self.pixel_indices), len(u_edges)-1, len(epsilons)))
         for (i, pixel_index) in enumerate(self.pixel_indices):
             output[i] = pixel_probs[pixel_index]
 
@@ -85,10 +85,17 @@ class Weighter:
         Max numbers of electrons per pixel to model
     weight_matrix: array-like
         The pixel weights to apply. The weight matrix M is defined such that lambda = M f, where f is the vector of fluxes which will be returned by this fitter and lambda is the incident photon rate for each pixel. Note: If you provide a 1D array, it will be assumed that you meant a 2D array where the second axis had length 1. If your weight_matrix smaller than the number of pixels listed in the pixel layout, it will be assumed that you provided a per-pixel weight which you want to be the same for all pixels regardless of the time bin.
+    histogram_max_electrons : float (optional)
+        Max numbers of electrons to include in the histogram. If not provided, max_electrons will be used.
     """
-    def __init__(self, pixel_layout, max_electrons, weight_matrix):
+    def __init__(self, pixel_layout, max_electrons, weight_matrix, histogram_max_electrons=None):
         self.pixel_layout = pixel_layout
-        self.u_edges = np.arange(-2, max_electrons, 1/ADU_PER_ELECTRON)
+        max_hist = max_electrons if histogram_max_electrons is None else min(histogram_max_electrons, max_electrons)
+
+        # Shift the edges so that the zero bin has center at exactly zero
+        self.u_edges = np.arange(-2, max_hist, 1/ADU_PER_ELECTRON)
+        self.u_edges -= self.u_edges[np.argmin(np.abs(self.u_edges))]
+
         self.histograms = np.zeros((pixel_layout.n_histograms(), len(self.u_edges)-1))
         self.max_electrons = max_electrons
         self.prep_fit(max_electrons, weight_matrix)
@@ -160,10 +167,8 @@ class Weighter:
     def get_fluxes(self, n_iterations=10):
         # Remove zero-valued bins which are surrounded by nonzero bins
         self.histograms[:, 1:-1][(self.histograms[:,:-2] != 0) & (self.histograms[:,2:] != 0) & (self.histograms[:,1:-1] == 0)] = np.nan
-        # Normalize histograms
-        self.histograms = np.einsum("au,a->au", self.histograms, 1/np.nansum(self.histograms, axis=1))
         # Estimate initial fluxes
-        estimated_pixel_fluxes = np.nansum(self.histograms * (self.u_edges[1:] + self.u_edges[:-1])/2, axis=1)
+        estimated_pixel_fluxes = np.nansum(self.histograms * (self.u_edges[1:] + self.u_edges[:-1])/2, axis=1)  /np.nansum(self.histograms, axis=1)
         fluxes = self.weight_matrix.pinv() @ estimated_pixel_fluxes
 
         converged=False

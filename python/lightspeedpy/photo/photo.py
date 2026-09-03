@@ -226,7 +226,8 @@ def make_photometry_no_psf(data_set, src_reg, bkg_reg, mode, rebin, n_electrons,
         weight_matrix[pixel_assignment==1,0] = 1 / np.sum(src_mask)
         weight_matrix[pixel_assignment==2,1] = 1 / np.sum(bkg_mask)
         layout = PixelLayout.image(data_set, mask=mask)
-        weighter = Weighter(layout, n_electrons, weight_matrix)
+        histogram_max_electrons = data_set.iter_kwargs["cr_ceil"] if "cr_ceil" in data_set.iter_kwargs else None
+        weighter = Weighter(layout, n_electrons, weight_matrix, histogram_max_electrons=histogram_max_electrons)
 
     times = []
     fluxes = []
@@ -295,7 +296,8 @@ def make_photometry_psf(data_set, src_reg, psf_image, mode, rebin, n_electrons, 
     weight_matrix = np.zeros((np.sum(src_mask), 2))
     weight_matrix[:,0] = psf_image[src_mask] # Source weights
     weight_matrix[:,1] = 1 / np.sum(src_mask) # Background weights
-    weighter = Weighter(layout, n_electrons, weight_matrix)
+    histogram_max_electrons = data_set.iter_kwargs["cr_ceil"] if "cr_ceil" in data_set.iter_kwargs else None
+    weighter = Weighter(layout, n_electrons, weight_matrix, histogram_max_electrons=histogram_max_electrons)
 
     times = []
     fluxes = []

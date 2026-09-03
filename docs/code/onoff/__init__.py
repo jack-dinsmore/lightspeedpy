@@ -1,1 +1,0 @@
-# Description: A utility to create on minus off images for pulsed objects

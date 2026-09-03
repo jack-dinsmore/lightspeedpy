@@ -24,7 +24,7 @@ def stack_bias(args):
 
     if args.dbg_noise and args.map_noise:
         n_display = 100
-        edges = np.arange(-2, 2, 1/ADU_PER_ELECTRON)
+        edges = np.arange(-2, 3, 1/ADU_PER_ELECTRON)
         centers = (edges[1:] + edges[:-1]) / 2
         n_pixels = np.prod(data_set.image_shape)
         counts = np.zeros((len(edges)+1, n_display), int)

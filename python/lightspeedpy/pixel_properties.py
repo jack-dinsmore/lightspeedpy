@@ -148,7 +148,11 @@ class PixelProperties:
         m1 = np.zeros(source_data_set.image_shape)
         m2 = np.zeros(source_data_set.image_shape)
         n_frames = np.zeros(source_data_set.image_shape)
-        edges = np.arange(-2, 2, 1/ADU_PER_ELECTRON)
+
+        # Make edges so that the zero bin is centered at exactly zero
+        edges = np.arange(-2, 3, 1/ADU_PER_ELECTRON)
+        edges -= edges[np.argmin(np.abs(edges))]
+
         n_pixels = np.prod(source_data_set.image_shape)
         counts = np.zeros((len(edges)+1, n_pixels), int)
         arange = np.arange(n_pixels)

@@ -164,6 +164,7 @@ class Weighter:
         bin_indices = bin_indices[acceptable_mask] - 1
         self.histograms[histogram_indices, bin_indices] += 1
 
+    @np.errstate(divide="ignore")
     def get_fluxes(self, n_iterations=10):
         # Remove zero-valued bins which are surrounded by nonzero bins
         self.histograms[:, 1:-1][(self.histograms[:,:-2] != 0) & (self.histograms[:,2:] != 0) & (self.histograms[:,1:-1] == 0)] = np.nan

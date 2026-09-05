@@ -1,6 +1,5 @@
 import numpy as np
 from astropy.io import fits
-import numpy as np
 from ..cli import get_dataset
 FLAT_NAN_THRESHOLD = 0.1
 

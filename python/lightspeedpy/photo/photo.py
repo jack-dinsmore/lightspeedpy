@@ -4,7 +4,7 @@ from multiprocessing import Pool
 from astropy.io import fits
 from astropy.time import Time
 from ..cli import get_dataset
-from ..psf_utils import make_psf_image
+from ..psf_utils import make_psf_from_region
 from ..regions import Region
 from ..constants import FORBIDDEN_KEYWORDS
 from ..weight import Weighter, PixelLayout
@@ -21,14 +21,18 @@ def get_photometry(args):
         bkg_reg = None
     else:
         bkg_reg = Region.load(args.bkg)
+    if args.roi is None:
+        roi_reg = None
+    else:
+        roi_reg = Region.load(args.roi)
 
     if args.errors is None:
-        photometry = make_photometry(data_set, src_reg, bkg_reg, args.mode, args.rebin, args.n_electrons, args.n_iterations)
+        photometry = make_photometry(data_set, src_reg, bkg_reg, roi_reg, args.mode, args.rebin, args.n_electrons, args.n_iterations)
         save_name = args.output
         is_slurm = False
     else:
         if "SLURM_ARRAY_TASK_ID" in os.environ and os.environ["SLURM_ARRAY_TASK_ID"] != "":
-            photometry = make_photometry(data_set, src_reg, bkg_reg, args.mode, args.rebin, args.n_electrons, args.n_iterations, seed=np.random.randint(2**32))
+            photometry = make_photometry(data_set, src_reg, bkg_reg, roi_reg, args.mode, args.rebin, args.n_electrons, args.n_iterations, seed=np.random.randint(2**32))
             if not os.path.exists(args.output[:-5]):
                 os.mkdir(args.output[:-5])
             save_name = f"{args.output[:-5]}/{os.environ["SLURM_ARRAY_TASK_ID"]}.fits"
@@ -36,7 +40,7 @@ def get_photometry(args):
         else:
             params = []
             for _ in range(N_BOOTSTRAP):
-                params.append([data_set, src_reg, bkg_reg, args.mode, args.rebin, args.n_electrons, args.n_iterations, np.random.randint(2**32)])
+                params.append([data_set, src_reg, bkg_reg, roi_reg, args.mode, args.rebin, args.n_electrons, args.n_iterations, np.random.randint(2**32)])
             with Pool() as pool:
                 photos = pool.starmap(make_photometry, params)
             photometry = accumulate_bootstrap_photos(photos)
@@ -171,7 +175,7 @@ class Photometry:
 
         return Photometry(edges, flux, header0, header1, duration, mjdrefi, errors=errors)
 
-def make_photometry(data_set, src_reg, bkg_reg, mode, rebin, n_electrons=3, n_iterations=25, seed=None):
+def make_photometry(data_set, src_reg, bkg_reg, roi_reg, mode, rebin, n_electrons=3, n_iterations=25, seed=None):
     """
     Analyze the photometry of a data set by adding the target flux, with a comp star as a calibrator
 
@@ -197,8 +201,9 @@ def make_photometry(data_set, src_reg, bkg_reg, mode, rebin, n_electrons=3, n_it
     if bkg_reg is None:
         if mode != "weight":
             raise Exception("PSF weighting can only be used in weight mode")
-        psf_image = make_psf_image(data_set, src_reg, extend_region=True)
-        return make_photometry_psf(data_set, src_reg, psf_image, mode, rebin, n_electrons, n_iterations, seed)
+        psf_image = make_psf_from_region(data_set, src_reg)
+
+        return make_photometry_psf(data_set, roi_reg, psf_image, rebin, n_electrons, n_iterations, seed)
     else:
         return make_photometry_no_psf(data_set, src_reg, bkg_reg, mode, rebin, n_electrons, n_iterations, seed)
 
@@ -281,7 +286,7 @@ def make_photometry_no_psf(data_set, src_reg, bkg_reg, mode, rebin, n_electrons,
     return Photometry.from_data_set(data_set, times, fluxes, duration*rebin, int(np.round(mjd_refi.mjd)))
 
 
-def make_photometry_psf(data_set, src_reg, psf_image, mode, rebin, n_electrons, n_iterations, seed):
+def make_photometry_psf(data_set, src_reg, psf_image, rebin, n_electrons, n_iterations, seed):
     xs, ys = np.meshgrid(np.arange(data_set.image_shape[1]), np.arange(data_set.image_shape[0]))
     src_mask = src_reg.contains(xs, ys)
     if seed is not None:

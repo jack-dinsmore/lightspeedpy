@@ -16,6 +16,9 @@ class PixelLayout:
         An array containing the pixel index of each histogram
     """
     def __init__(self, data_set, pixel_indices, mask=None):
+        if "SHIFTED" in data_set.header1:
+            if data_set.header1["SHIFTED"] == "T":
+                print("WARNING: Using a shifted data cube with the weight method will cause bias")
         self.pixel_indices = pixel_indices
         self.pixel_properties = data_set.get_pixel_properties(True)
         self.mask = mask
@@ -164,6 +167,7 @@ class Weighter:
         bin_indices = bin_indices[acceptable_mask] - 1
         self.histograms[histogram_indices, bin_indices] += 1
 
+    @np.errstate(divide="ignore")
     def get_fluxes(self, n_iterations=10):
         # Remove zero-valued bins which are surrounded by nonzero bins
         self.histograms[:, 1:-1][(self.histograms[:,:-2] != 0) & (self.histograms[:,2:] != 0) & (self.histograms[:,1:-1] == 0)] = np.nan

@@ -78,7 +78,7 @@ def add_dataset_args(parser):
         Parser to which to add arguments
     """
     parser.add_argument("--input", required=True, help="Name of the cube001 file")
-    parser.add_argument("--output", required=True, help="File name of output image")
+    parser.add_argument("--output", required=True, help="File name of output")
     parser.add_argument("--bias", help="File name of bias")
     parser.add_argument("--dark", help="File name of dark")
     parser.add_argument("--flat", help="File name of flat")

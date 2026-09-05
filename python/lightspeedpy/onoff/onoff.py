@@ -16,6 +16,29 @@ def contains_phase(rang, phase):
     else:
         return (rang[0] < phase) or (phase < rang[1])
 
+class PhaseRange:
+    def __init__(self, s):
+        self.ranges = []
+        self.reversed = []
+        for r in s.split("&"):
+            chunks = r.split(":")
+            if len(chunks) != 2:
+                raise Exception("Each range must be colon-separated")
+            low, high = float(chunks[0]), float(chunks[1])
+            self.ranges.append((low, high))
+            if low < high:
+                self.reversed.append(False)
+            else:
+                self.reversed.append(True)
+                
+    def contains(self, phase):
+        for reverse, (low, high) in zip(self.reversed, self.ranges):
+            if (not reverse) and (low < phase and phase < high):
+                return True
+            if reverse and (low < phase or phase < high):
+                return True
+        return False
+
 def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterations=25):
     """
     Get a bias, dark, flat corrected image from a :class:`DataSet` by summing all the detected photons per frame.
@@ -36,7 +59,11 @@ def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterat
     Image
         The image, crrected for flat and quantum efficiency
     """
-    on_range, off_range = get_range(phase_string)
+    strings = phase_string.split(',')
+    if len(strings) != 2:
+        raise Exception("The phase string must have two comma-separated ranges")
+    on_range = PhaseRange(strings[0])
+    off_range = PhaseRange(strings[1])
 
     on_image = np.zeros(data_set.image_shape)
     on_n_frames = np.zeros(data_set.image_shape)
@@ -51,7 +78,7 @@ def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterat
 
     for frame in data_set:
         phase = ephemeris.get_phase(frame.timestamp)
-        if contains_phase(on_range, phase):
+        if on_range.contains(phase):
             good_mask = ~np.isnan(frame.image)
             if mode == "sum":
                 on_image[good_mask] += frame.image[good_mask]
@@ -63,7 +90,7 @@ def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterat
                 raise Exception(f"Unrecognized mode {mode}")
             on_n_frames[good_mask] += 1
                 
-        if contains_phase(off_range, phase):
+        if off_range.contains(phase):
             good_mask = ~np.isnan(frame.image)
             if mode == "sum":
                 off_image[good_mask] += frame.image[good_mask]
@@ -74,14 +101,6 @@ def make_on_off(data_set, ephemeris, phase_string, mode, n_electrons=3, n_iterat
             else:
                 raise Exception(f"Unrecognized mode {mode}")
             off_n_frames[good_mask] += 1
-
-    # import pickle
-    # with open("weighter.pkl", 'wb') as f:
-    #     pickle.dump([on_weighter, off_weighter, on_n_frames, off_n_frames], f)
-
-    # import pickle
-    # with open("weighter.pkl", 'rb') as f:
-    #     on_weighter, off_weighter, on_n_frames, off_n_frames = pickle.load(f)
 
     if mode == "weight":
         # One needs to multiply by the number of frames since weighting calculates the mean value and the other methods compute the sum.

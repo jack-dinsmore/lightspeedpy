@@ -1,5 +1,5 @@
 import numpy as np
-import os, copy
+import os, copy, logging
 from astropy.io import fits
 from astropy.time import Time, TimeDelta
 from .frame import DataSetIteratorRet
@@ -8,6 +8,7 @@ from .qe import QuantumEfficiency
 from .regions import Region, BoxRegion
 
 DEFAULT_TIME = "2025-09-13 06:00:00.00429"
+logger = logging.getLogger("lightspeedpy")
 
 def is_header_equal(h1, h2):
     """
@@ -231,12 +232,12 @@ class DataSet:
             start = breaks[i]
             stop = breaks[i+1]-1
             if stop - start > 2:
-                print(sorted_filenames[start], f"({sorted_frames[start]} frames)")
-                print("...")
-                print(sorted_filenames[stop], f"({sorted_frames[stop]} frames)")
+                logger.info(sorted_filenames[start], f"({sorted_frames[start]} frames)")
+                logger.info("...")
+                logger.info(sorted_filenames[stop], f"({sorted_frames[stop]} frames)")
             else:
                 for j in range(start, stop+1):
-                    print(sorted_filenames[j], f"({sorted_frames[j]} frames)")
+                    logger.info(sorted_filenames[j], f"({sorted_frames[j]} frames)")
 
     def bootstrap(self, seed=None):
         """

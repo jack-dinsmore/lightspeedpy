@@ -1,8 +1,10 @@
 import numpy as np
-import os
+import os, logging
 import matplotlib.pyplot as plt
 from ..dataset import DataSet
-from ..pixel_properties import PixelProperties, ADU_PER_ELECTRON
+from ..pixel_properties import PixelProperties
+from ..constants import ADU_PER_ELECTRON, N_BIAS_FRAMES
+logger = logging.getLogger("lightspeedpy")
 
 def get_dataset(args):
     if os.path.exists(args.output) and not args.clobber:
@@ -12,7 +14,7 @@ def get_dataset(args):
     max_index = None if args.max_index is None else int(args.max_index)
     data_set = DataSet.from_first(args.input, min_index=min_index, max_index=max_index, cut_cr=False, bar_color='green')
 
-    print("Loaded files")
+    logger.info("Loaded files")
     data_set.display_filenames()
         
     return data_set
@@ -37,7 +39,7 @@ def stack_bias(args):
         mask = mask.reshape(*data_set.image_shape)
         
         # Get histograms
-        for frame in data_set.iterator(max_frames=10_000):
+        for frame in data_set.iterator(max_frames=N_BIAS_FRAMES):
             digits = np.digitize(frame.image[mask], edges)
             counts[digits, arange] += 1
         counts = counts[1:-1,:]

@@ -1,8 +1,10 @@
 import numpy as np
 from scipy.special import factorial, binom
+import logging
 from .qe import QuantumEfficiency
 from .constants import ADU_PER_ELECTRON
 from .util import Matrix
+logger = logging.getLogger("lightspeedpy")
 
 class PixelLayout:
     """
@@ -18,7 +20,7 @@ class PixelLayout:
     def __init__(self, data_set, pixel_indices, mask=None):
         if "SHIFTED" in data_set.header1:
             if data_set.header1["SHIFTED"] == "T":
-                print("WARNING: Using a shifted data cube with the weight method will cause bias")
+                logger.warning("Using a shifted data cube with the weight method will cause bias")
         self.pixel_indices = pixel_indices
         self.pixel_properties = data_set.get_pixel_properties(True)
         self.mask = mask
@@ -206,12 +208,12 @@ class Weighter:
             fluxes -= inverse_hessian @ gradient
             
             fractional_shift = np.sqrt(np.nanmean((fluxes - old_fluxes)**2)) / np.abs(np.nanmean(old_fluxes))
-            # print(f"Iteration {iteration+1}: fractional shift of {fractional_shift*100:.2f}%")
+            logger.debug(f"Iteration {iteration+1}: fractional shift of {fractional_shift*100:.2f}%")
             if fractional_shift < 0.005:
                 converged=True
                 break
 
         if not converged:
-            print(f"Warning: fitter didn't converge after {n_iterations} iterations")
+            logger.warning(f"Fitter didn't converge after {n_iterations} iterations")
 
         return fluxes

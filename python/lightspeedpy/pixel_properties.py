@@ -1,10 +1,36 @@
 import numpy as np
-import os, tqdm
+import os, tqdm, logging
 from astropy.io import fits
+from scipy.special import loggamma, digamma
 from .util import trim_image
-from .constants import FORBIDDEN_KEYWORDS, ADU_PER_ELECTRON
+from .constants import FORBIDDEN_KEYWORDS, ADU_PER_ELECTRON, N_BIAS_FRAMES
 
+CASH_THRESHOLD = 0.5
 GRID_LOCATION = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "moments.npy"))
+logger = logging.getLogger("lightspeedpy")
+
+def pearson(x, mean, sigma, k, nu):
+    a = sigma * np.sqrt(2 * k)
+    z = (x - mean) / a
+    log_k = (2*k - 2) * np.log(2) + 2 * np.real(loggamma(k + 0.5j * nu)) - np.log(np.pi) - loggamma(2*k - 1) - np.log(a)
+    log_f = log_k - k * np.log(1 + z**2) - nu * np.arctan(z)
+    return np.exp(log_f)
+
+def pearson_grad(x, mean, sigma, k, nu):
+    a = sigma * np.sqrt(2 * k)
+    z = (x - mean) / a
+    denom = 1 + z**2
+
+    f = pearson(x, mean, sigma, k, nu)
+    psi_c = digamma(k + 0.5j * nu)
+
+    dlog_dk = 2*np.log(2) + 2*np.real(psi_c) - 2*digamma(2*k - 1) - 1/(2*k) - np.log(denom) + z**2/denom + nu*z/(2*k*denom)
+    
+    dlog_dnu = -np.imag(psi_c) - np.arctan(z)
+    dlog_dsigma = ((2*k - 1)*z**2 + nu*z - 1) / (sigma * denom)
+    dlog_dmean = (2*k*z + nu) / (a * denom)
+
+    return f*np.array([dlog_dmean, dlog_dsigma, dlog_dk, dlog_dnu])
 
 class PixelProperties:
     """
@@ -17,8 +43,9 @@ class PixelProperties:
     widths : array-like
         Noises in each pixel, defined as the standard deviation of the Gaussian error approximation.
     """
-    def __init__(self, bias, widths, params, source_data_set, dest_data_set):
+    def __init__(self, bias, widths, params, single_mask, source_data_set, dest_data_set):
         self.params = params
+        self.single_mask = single_mask
         if source_data_set is not None:
             self.bias = trim_image(bias, source_data_set, dest_data_set)
             self.widths = trim_image(widths, source_data_set, dest_data_set)
@@ -33,6 +60,7 @@ class PixelProperties:
 
     def crop(self, bbox):
         self.params = self.params[bbox[0]:bbox[1],bbox[2]:bbox[3],:]
+        self.single_mask = self.params[bbox[0]:bbox[1],bbox[2]:bbox[3]]
         self.bias = self.bias[bbox[0]:bbox[1],bbox[2]:bbox[3]]
         self.widths = self.widths[bbox[0]:bbox[1],bbox[2]:bbox[3]]
 
@@ -50,6 +78,7 @@ class PixelProperties:
         h2 = fits.ImageHDU(data=self.widths)
         if self.params is not None:
             h3 = fits.ImageHDU(data=self.params)
+            h4 = fits.ImageHDU(data=self.single_mask.astype(np.uint8))
 
         for key, value in self.header0.items():
             if key not in FORBIDDEN_KEYWORDS:
@@ -63,17 +92,19 @@ class PixelProperties:
                 h2.header[key] = value
                 if self.params is not None:
                     h3.header[key] = value
+                    h4.header[key] = value
 
         h0.header["PIXPROP"] = "T"
         h1.header["PIXPROP"] = "T"
         h2.header["PIXPROP"] = "T"
         if self.params is not None:
             h3.header["PIXPROP"] = "T"
+            h4.header["PIXPROP"] = "T"
 
         hdul = [h0, h1, h2]
         if self.params is not None:
             hdul.append(h3)
-
+            hdul.append(h4)
 
         fits.HDUList(hdul).writeto(filename, overwrite=clobber)
 
@@ -84,11 +115,13 @@ class PixelProperties:
             
             bias = np.array(hdul[1].data)
             widths = np.array(hdul[2].data)
-            if len(hdul) == 4:
+            if len(hdul) == 5:
                 params = np.array(hdul[3].data)
+                single_mask = np.array(hdul[4].data).astype(bool)
             else:
                 params = None
-            pp = PixelProperties(bias, widths, params, None, None)
+                single_mask = None
+            pp = PixelProperties(bias, widths, params, single_mask, None, None)
             pp.header0 = hdul[0].header
             pp.header1 = hdul[1].header
         return pp
@@ -114,20 +147,43 @@ class PixelProperties:
 
         if self.params is None:
             raise Exception("You cannot get a noise probability unless you first map the noise distribution")
-        if mask is None:
-            denom = 1 / (2*self.params[:,:,0]**2)
-            pdf = np.exp(-(image-self.params[:,:,1] - true_n)**2 * denom) * self.params[:,:,2]
-            pdf += np.exp(-(image-self.params[:,:,1]-self.params[:,:,3] - true_n)**2 * denom) * self.params[:,:,4]
-            pdf += np.exp(-(image-self.params[:,:,1]+self.params[:,:,5] - true_n)**2 * denom) * self.params[:,:,6]
-            pdf /= np.sqrt(2*np.pi*self.params[:,:,0]**2)
-        else:
-            denom = 1 / (2*self.params[mask,0]**2)
-            pdf = np.exp(-(image-self.params[mask,1] - true_n)**2 * denom) * self.params[mask,2]
-            pdf += np.exp(-(image-self.params[mask,1]-self.params[mask,3] - true_n)**2 * denom) * self.params[mask,4]
-            pdf += np.exp(-(image-self.params[mask,1]+self.params[mask,5] - true_n)**2 * denom) * self.params[mask,6]
-            pdf /= np.sqrt(2*np.pi*self.params[mask,0]**2)
 
-        return pdf
+        if mask is None:
+            single_mask = self.single_mask
+            triple_mask = ~self.single_mask
+            image_single_mask = self.single_mask
+        else:
+            single_mask = self.single_mask & mask
+            triple_mask = (~self.single_mask) & mask
+            image_single_mask = self.single_mask[mask]
+        
+        pdf = np.zeros((self.params.shape[0], self.params.shape[1]))
+        pdf[single_mask] = pearson(
+            image[image_single_mask]-true_n,
+            self.params[single_mask,0], self.params[single_mask,1],
+            self.params[single_mask,2], self.params[single_mask,3]
+        )
+
+        pdf[triple_mask] = pearson(
+            image[~image_single_mask]-true_n,
+            self.params[triple_mask,0], self.params[triple_mask,1],
+            self.params[triple_mask,2], self.params[triple_mask,3]
+        ) * self.params[triple_mask,8]
+        pdf[triple_mask] += pearson(
+            image[~image_single_mask]-true_n,
+            self.params[triple_mask,0] + self.params[triple_mask,4], self.params[triple_mask,1],
+            self.params[triple_mask,2], self.params[triple_mask,3]
+        ) * self.params[triple_mask,5]
+        pdf[triple_mask] += pearson(
+            image[~image_single_mask]-true_n,
+            self.params[triple_mask,0] - self.params[triple_mask,6],self.params[triple_mask,1],
+            self.params[triple_mask,2], self.params[triple_mask,3]
+        ) * self.params[triple_mask,7]
+
+        if mask is None:
+            return pdf
+        else:
+            return pdf[mask]
 
     def default(data_set):
         """
@@ -137,11 +193,12 @@ class PixelProperties:
             np.zeros(data_set.image_shape),
             np.ones(data_set.image_shape) * 0.3,
             None,
+            None,
             data_set,
             data_set
         )
 
-    def from_bias(source_data_set, dest_data_set, map_noise, max_frames=10_000):
+    def from_bias(source_data_set, dest_data_set, map_noise, max_frames=N_BIAS_FRAMES):
         """
         Get the pixel properties of a bias data set
         """
@@ -182,14 +239,22 @@ class PixelProperties:
 
         # Get fit parameters
         if map_noise:
-            params = fit_gaussians(edges, counts)
-            params = params.transpose().reshape((bias.shape[0], bias.shape[1], 7))
+            params_single, cash_single = fit_single(edges, counts)
+            params_single = params_single.transpose().reshape((bias.shape[0], bias.shape[1], params_single.shape[0]))
+
+            params, cash_triple = fit_triple(edges, counts)
+            params = params.transpose().reshape((bias.shape[0], bias.shape[1], params.shape[0]))
+
+            single_mask = (cash_triple - cash_single < 8).reshape((bias.shape[0], bias.shape[1]))
+            print("Rate of singles", np.mean(single_mask))
+            params[single_mask,:4] = params_single[single_mask,:]
         else:
             params = None
+            single_mask = None
 
-        return PixelProperties(bias, widths, params, source_data_set, dest_data_set)
+        return PixelProperties(bias, widths, params, single_mask, source_data_set, dest_data_set)
     
-def fit_gaussians(edges, counts):
+def fit_single(edges, counts):
     """
     Fit a triple Gaussian to a list of histograms by minimizing the Cash statistic
 
@@ -202,62 +267,114 @@ def fit_gaussians(edges, counts):
 
     Returns an array of parameters (7, p)
     """
-    n_bins, n_pixels = counts.shape
+    centers = (edges[1:] + edges[:-1]) / 2
+    n_counts = np.sum(counts, axis=0).astype(float)
+    x0 = np.array([0, 0.22, 6, 0, 1])
+    params = np.repeat(x0[:, None], counts.shape[1], axis=1)
+    normalization = n_counts / ADU_PER_ELECTRON
+
+    for iteration in tqdm.tqdm(range(300), colour="yellow"):
+        outers = np.subtract.outer(centers, params[0])
+        gradient = pearson_grad(outers, 0, params[1], params[2], params[3]) * normalization * params[4]
+        model = pearson(outers, 0, params[1], params[2], params[3]) * normalization
+        model += 1e-7 * n_counts
+        gradient = np.concatenate([
+            gradient,
+            [model]
+        ])
+        model *= params[4]
+
+        gradient *= 2 * (1 - counts / model)
+        collapsed_gradient = np.sum(gradient, axis=1)
+        print(params[:,0])
+        print(collapsed_gradient[:,0])
+
+        # Perform gradient descent
+        learning_rate = 1e-1 / n_counts
+
+        params -= collapsed_gradient * learning_rate
+
+        # Implement bounds
+        params[0] = np.clip(params[0], -1, 1) # Mean
+        params[1] = np.clip(params[1], 0.05, 0.8) # Sigma
+        params[2] = np.clip(params[2], 1, 1000) # k
+        params[3] = np.clip(params[3], -3, 3) # Nu
+        params[4] = np.clip(params[4], 0.5, 1.5) # Norm
+
+    params[4] = 1
+    outers = np.subtract.outer(centers, params[0])
+    model = pearson(outers, 0, params[1], params[2], params[3]) * normalization
+    cash = 2*np.sum((model - counts * np.log(model))[np.abs(centers) > CASH_THRESHOLD], axis=0)
+
+    return params[:4], cash
+
+def fit_triple(edges, counts):
+    """
+    Fit a triple Gaussian to a list of histograms by minimizing the Cash statistic
+
+    Parameters
+    ----------
+    edges : array-like 
+        Edges of the bins (shape (e,))
+    counts : array-like
+        Data (shape (e-1, p) for p pixels.)
+
+    Returns an array of parameters (7, p)
+    """
     centers = (edges[1:] + edges[:-1]) / 2
     n_counts = np.sum(counts, axis=0)
-    total_area  = n_counts * (centers[1] - centers[0])
-    x0 = np.array([0.2, 0., 0.9, 0.6, 0.05, 0.6, 0.05])
-    params = np.repeat(x0[:, None], n_pixels, axis=1)
-    gradient = np.zeros((7, n_bins, n_pixels))
-    old_gradient = None
-    old_params = None
-    excess = 1e-7 * n_counts
+    x0 = np.array([0, 0.22, 6, 0, 0.6, 0.05, 0.6, 0.05, 0.9])
+    params = np.repeat(x0[:, None], counts.shape[1], axis=1)
+    normalization = n_counts / ADU_PER_ELECTRON
 
-    for iteration in tqdm.tqdm(range(100), colour="yellow"):
-        normalization = total_area / np.sqrt(2*np.pi * params[0]**2)
-        x01 = np.subtract.outer(centers, params[1])/params[0] # Shape e-1, p
-        x02 = x01 - params[3]/params[0]
-        x03 = x01 + params[5]/params[0]
-        gauss_1 = np.exp(-x01**2 / 2) * params[2] * normalization
-        gauss_2 = np.exp(-x02**2 / 2) * params[4] * normalization
-        gauss_3 = np.exp(-x03**2 / 2) * params[6] * normalization
-        model = gauss_1 + gauss_2 + gauss_3 + excess # Extra bit to avoid divide by zero errors
-        gradient[0,:,:] = (gauss_1*(x01**2-1) + gauss_2*(x02**2-1) + gauss_3*(x03**2-1)) / params[0]
-        gradient[1,:,:] = (gauss_1*x01 + gauss_2*x02 + gauss_3*x03) / params[0]
-        gradient[2,:,:] = gauss_1 / params[2]
-        gradient[3,:,:] = gauss_2 * x02 / params[0]
-        gradient[4,:,:] = gauss_2 / params[4]
-        gradient[5,:,:] = -gauss_3 * x03 / params[0]
-        gradient[6,:,:] = gauss_3 / params[6]
-        gradient *= 2 * (1 - counts / model)
+    for iteration in tqdm.tqdm(range(300), colour="yellow"):
+        outers = np.subtract.outer(centers, params[0])
+        m1 = pearson(outers, 0, params[1], params[2], params[3]) * normalization
+        g1 = pearson_grad(outers, 0, params[1], params[2], params[3]) * normalization
+        m2 = pearson(outers, 0 + params[4], params[1], params[2], params[3]) * normalization
+        g2 = pearson_grad(outers, 0 + params[4], params[1], params[2], params[3]) * normalization
+        m3 = pearson(outers, 0 - params[6], params[1], params[2], params[3]) * normalization
+        g3 = pearson_grad(outers, 0 - params[6], params[1], params[2], params[3]) * normalization
+        model = m1 * params[8] + m2 * params[5] + m3 * params[7]
+        gradient = g1 * params[8] + g2 * params[5] + g3 * params[7]
+        gradient = np.concatenate([gradient,
+            [g2[0] * params[5],
+            m2,
+            -g3[0] * params[7],
+            m3,
+            m1,
+            ],
+        ])
+        model += 1e-7 * n_counts
+        gradient *= (1 - counts / model)
+        collapsed_gradient = np.sum(gradient, axis=1)
         collapsed_gradient = np.sum(gradient, axis=1)
 
         # Perform gradient descent
-        learning_rate = 1e-2 / n_counts.astype(float)
-        if iteration > 0:
-            accel = collapsed_gradient - old_gradient
-            bb_learning_rate = np.sum((params - old_params) * accel, axis=0) / np.sum(accel**2, axis=0)
-            bb_learning_rate = np.clip(bb_learning_rate, 5e-5 / n_counts.astype(float), 3e-1 / n_counts.astype(float))
-            mask = np.isfinite(bb_learning_rate)
-            learning_rate[mask] = bb_learning_rate[mask]
-
-        old_params = np.copy(params)
+        learning_rate = 2e-2 / n_counts.astype(float)
         params -= collapsed_gradient * learning_rate
-        old_gradient = collapsed_gradient
 
         # Implement bounds
-        params[0] = np.clip(params[0], 0.08, 0.75)
-        params[1] = np.clip(params[1], -1., 1.)
-        params[2] = np.clip(params[2], 0.001, 10)
-        params[3] = np.clip(params[3], 0.05, 1)
-        params[4] = np.clip(params[4], 0.001, 0.2)
-        params[5] = np.clip(params[5], 0.05, 1)
-        params[6] = np.clip(params[6], 0.001, 0.2)
+        params[0] = np.clip(params[0], -1, 1) # Mean
+        params[1] = np.clip(params[1], 0.05, 0.8) # Sigma
+        params[2] = np.clip(params[2], 1, 1000) # k
+        params[3] = np.clip(params[3], -3, 3) # nu
+        params[4] = np.clip(params[4], 0.05, 1) # Delta high
+        params[5] = np.clip(params[5], 0.001, 0.3) # Amp high
+        params[6] = np.clip(params[6], 0.05, 1) # Delta low
+        params[7] = np.clip(params[7], 0.001, 0.3) # Amp low
+        params[8] = np.clip(params[8], 0.5, 1.5) # Amp mid
 
+    total = params[8] + params[5] + params[7]
+    params[8] /= total
+    params[5] /= total
+    params[7] /= total
 
-    total_amp = params[2] + params[4] + params[6]
-    params[2] /= total_amp
-    params[4] /= total_amp
-    params[6] /= total_amp
+    outers = np.subtract.outer(centers, params[0])
+    m1 = pearson(outers, 0, params[1], params[2], params[3]) * normalization
+    m2 = pearson(outers, 0 + params[4], params[1], params[2], params[3]) * normalization
+    m3 = pearson(outers, 0 - params[6], params[1], params[2], params[3]) * normalization
+    model = m1 * params[8] + m2 * params[5] + m3 * params[7]
+    cash = 2*np.sum((model - counts * np.log(model))[np.abs(centers) > CASH_THRESHOLD], axis=0)
 
-    return params
+    return params, cash

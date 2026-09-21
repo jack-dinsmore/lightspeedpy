@@ -17,3 +17,11 @@ You can add two light curves generated from multiple sources. The error bars wil
     python -m lightspeedpy.lc add --inputs INPUTS --output OUTPUT
         
 where `--inputs` is a space-separated list of input light curve files.
+
+API documentation
+^^^^^^^^^^^^^^^^^
+
+.. automodule:: lightspeedpy.lc
+    :members:
+    :undoc-members:
+    :show-inheritance:

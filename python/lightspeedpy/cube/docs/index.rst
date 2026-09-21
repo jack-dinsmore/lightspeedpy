@@ -13,3 +13,10 @@ stack
 
 Stack individual images into one lightspeedpy data cube
 
+API documentation
+^^^^^^^^^^^^^^^^^
+
+.. automodule:: lightspeedpy.cube
+    :members:
+    :undoc-members:
+    :show-inheritance:

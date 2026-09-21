@@ -4,23 +4,11 @@ from ..image.image import Image
 from ..weight import Weighter, PixelLayout
 from ..util import Matrix
 
-def get_range(s):
-    on, off = s.split(',')
-    on_low, on_high = on.split(':')
-    off_low, off_high = off.split(":")
-    return (float(on_low), float(on_high)), (float(off_low), float(off_high))
-
-def contains_phase(rang, phase):
-    if rang[0] < rang[1]:
-        return (rang[0] < phase) and (phase < rang[1])
-    else:
-        return (rang[0] < phase) or (phase < rang[1])
-
 class PhaseRange:
     def __init__(self, s):
         self.ranges = []
         self.reversed = []
-        for r in s.split("&"):
+        for r in s.split("|"):
             chunks = r.split(":")
             if len(chunks) != 2:
                 raise Exception("Each range must be colon-separated")

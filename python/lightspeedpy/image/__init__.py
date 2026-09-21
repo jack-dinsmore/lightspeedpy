@@ -1,5 +1,4 @@
 from .image import Image, make_image
 
-# Description: A utility to generate stacked, bias/flat/dark-corrected images.
-
+# If you want any of your functions to be part of the lightspeedpy API, so that other people can use them, import them here. If you want them to appear in the automatic documentation, put the name of the function in this __all__ variable.
 __all__ = ["Image", "make_image"]

@@ -9,7 +9,7 @@ Install Lightspeedpy with
     cd lightspeedpy
     python3 -m pip install -e .
 
-The `-e` argument in the last line enables you to edit the `lightspeedpy` code and have the changes take effect.
+The `-e` argument in the last line enables you to edit the `lightspeedpy` code and have the changes take effect without needing to re-install.
 
 If you intend to make your own plugins, we suggest first forking the lightspeedpy repository. That means copying the main lightspeedpy repository to a repository you own and can edit yourself. This is done using Github's website. See Github documentation for instructions. Then install your fork with
 
